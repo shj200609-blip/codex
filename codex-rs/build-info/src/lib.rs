@@ -74,23 +74,25 @@ impl BuildInfo {
         }
     }
 
-    /// Return the parsed package version, or `0.0.0` for a source build.
+    /// Return the package manifest version, falling back to the compiled workspace version.
     pub fn version(&self) -> &Version {
         &self.version
     }
 
     /// Format the version for a user-facing Codex header.
     pub fn display_version(&self) -> String {
-        if self.build_commit == "dev" {
-            "dev".to_string()
-        } else if self.is_source_build() {
-            format!("v{}", self.build_commit)
+        if self.is_source_build() {
+            if self.build_commit == "dev" {
+                "dev".to_string()
+            } else {
+                format!("v{}", self.build_commit)
+            }
         } else {
             format!("v{}", self.version)
         }
     }
 
-    /// Identify source builds without parsing their displayed Git commit.
+    /// Identify unversioned source builds without parsing their displayed Git commit.
     pub fn is_source_build(&self) -> bool {
         self.version.major == 0 && self.version.minor == 0 && self.version.patch == 0
     }
@@ -115,7 +117,8 @@ impl BuildInfo {
         }
 
         Self {
-            version: Version::new(0, 0, 0),
+            version: Version::parse(env!("CARGO_PKG_VERSION"))
+                .unwrap_or_else(|_| Version::new(0, 0, 0)),
             build_commit: build_commit.to_owned(),
             target: Some(env!("CODEX_BUILD_TARGET").to_owned()),
         }

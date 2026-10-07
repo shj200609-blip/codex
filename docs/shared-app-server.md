@@ -72,6 +72,17 @@ but not for IDE tool execution with Code Mode enabled. A connected reviewer can
 report Ready while tool execution fails because the host executable is missing;
 verify an actual `apply_patch` turn before treating setup as complete.
 
+For this fork, `[workspace.package].version` is the compatibility version for
+unpackaged Cargo builds (currently `0.162.0-alpha.2`, matching the installed IDE
+runtime and Code Mode host). `codex-build-info` embeds that version as the fallback
+when there is no valid `codex-package.json`; packaged releases still use their
+manifest version. `codex --version` and the App Server initialize user agent
+already read the compiled Cargo version; the fallback keeps other runtime build
+information consistent with them after later local rebuilds. Supply
+`STABLE_GIT_COMMIT=$(git rev-parse HEAD)` when building to retain commit provenance.
+After a rebuild, restart the shared App Server and reload VS Code so both clients
+use the new runtime. Server restart discards session-memory ChangeSets.
+
 For this macOS development installation, the V8 prebuilt download for a source
 host build returned 404. The existing official IDE package's
 `codex-code-mode-host` (0.162.0-alpha.2) was copied beside the fork CLI. Its
