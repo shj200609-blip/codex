@@ -648,6 +648,12 @@ impl TurnRequestProcessor {
             )
             .await?;
 
+        self.outgoing
+            .claim_thread_producer(thread_id, request_id.connection_id)
+            .await?;
+        // A turn driver must be subscribed before Core can emit its first event/request.
+        self.ensure_conversation_listener(thread_id, request_id.connection_id, false)
+            .await?;
         let submission = thread
             .start_or_steer_turn(
                 TurnInputRequest::new(input)
@@ -1027,12 +1033,12 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: TurnSteerParams,
     ) -> Result<TurnSteerResponse, JSONRPCErrorError> {
-        let (_, thread) = self
-            .load_thread(&params.thread_id)
-            .await
-            .inspect_err(|error| {
-                self.track_error_response(request_id, error, /*error_type*/ None);
-            })?;
+        let (thread_id, thread) =
+            self.load_thread(&params.thread_id)
+                .await
+                .inspect_err(|error| {
+                    self.track_error_response(request_id, error, /*error_type*/ None);
+                })?;
         self.ensure_direct_input_allowed(request_id, thread.as_ref())
             .await?;
         self.config_manager
@@ -1062,6 +1068,9 @@ impl TurnRequestProcessor {
             .collect();
         let additional_context = map_additional_context(params.additional_context);
 
+        self.outgoing
+            .claim_thread_producer(thread_id, request_id.connection_id)
+            .await?;
         let submission = thread
             .steer_turn(
                 TurnInputRequest::new(TurnInput::UserInput {

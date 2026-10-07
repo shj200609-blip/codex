@@ -522,6 +522,88 @@ class CapabilityRootLocation(RootModel[EnvironmentCapabilityRootLocation]):
     ]
 
 
+class ChangeReviewState(Enum):
+    pending = "pending"
+    accepted = "accepted"
+    reverted = "reverted"
+    conflict = "conflict"
+    reviewed = "reviewed"
+    unsupported = "unsupported"
+
+
+class ChangeSetFileKind(Enum):
+    added = "added"
+    modified = "modified"
+    deleted = "deleted"
+
+
+class ChangeSetFileReviewParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set_id: Annotated[str, Field(alias="changeSetId")]
+    file_id: Annotated[str, Field(alias="fileId")]
+    thread_id: Annotated[str, Field(alias="threadId")]
+    turn_id: Annotated[str, Field(alias="turnId")]
+
+
+class ChangeSetHunkLocateParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set_id: Annotated[str, Field(alias="changeSetId")]
+    file_id: Annotated[str, Field(alias="fileId")]
+    hunk_id: Annotated[str, Field(alias="hunkId")]
+    thread_id: Annotated[str, Field(alias="threadId")]
+    turn_id: Annotated[str, Field(alias="turnId")]
+
+
+class ChangeSetHunkResult(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    changed: bool
+    file_id: Annotated[str, Field(alias="fileId")]
+    hunk_id: Annotated[str, Field(alias="hunkId")]
+    message: str | None = None
+    state: ChangeReviewState
+
+
+class ChangeSetHunkReviewParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set_id: Annotated[str, Field(alias="changeSetId")]
+    file_id: Annotated[str, Field(alias="fileId")]
+    hunk_id: Annotated[str, Field(alias="hunkId")]
+    thread_id: Annotated[str, Field(alias="threadId")]
+    turn_id: Annotated[str, Field(alias="turnId")]
+
+
+class ChangeSetListParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class ChangeSetReadParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    thread_id: Annotated[str, Field(alias="threadId")]
+    turn_id: Annotated[str, Field(alias="turnId")]
+
+
+class ChangeSetReviewParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set_id: Annotated[str, Field(alias="changeSetId")]
+    thread_id: Annotated[str, Field(alias="threadId")]
+    turn_id: Annotated[str, Field(alias="turnId")]
+
+
 class CliAuthCredentialsStoreMode(Enum):
     file = "file"
     keyring = "keyring"
@@ -1169,6 +1251,21 @@ class CreditsSnapshot(BaseModel):
     balance: str | None = None
     has_credits: Annotated[bool, Field(alias="hasCredits")]
     unlimited: bool
+
+
+class CurrentHunkRangeKindValue(Enum):
+    content = "content"
+    deletion_anchor = "deletionAnchor"
+
+
+class CurrentHunkRangeKind(RootModel[CurrentHunkRangeKindValue | Literal["filePresence"]]):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: Annotated[
+        CurrentHunkRangeKindValue | Literal["filePresence"],
+        Field(description="How a live range should be revealed in the current file."),
+    ]
 
 
 class CyberAccessProgram(Enum):
@@ -2079,6 +2176,50 @@ class HooksListParams(BaseModel):
         list[str] | None,
         Field(description="When empty, defaults to the current session working directory."),
     ] = None
+
+
+class LocatedHunkLocationResult(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    kind: CurrentHunkRangeKind
+    line_count: Annotated[
+        int,
+        Field(
+            description="Current after-side lines, excluding matching context. Zero for anchors.",
+            ge=0,
+        ),
+    ]
+    start_line: Annotated[
+        int,
+        Field(
+            description="One-based current line (consistent with protocol file locations). For an anchor, the insertion point before this line; EOF is N + 1.",
+            ge=0,
+        ),
+    ]
+    status: Annotated[Literal["located"], Field(title="LocatedHunkLocationResultStatus")]
+
+
+class ConflictHunkLocationResult(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    reason: str
+    status: Annotated[Literal["conflict"], Field(title="ConflictHunkLocationResultStatus")]
+
+
+class UnsupportedHunkLocationResult(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    reason: str
+    status: Annotated[Literal["unsupported"], Field(title="UnsupportedHunkLocationResultStatus")]
+
+
+class HunkNotPresentReason(Enum):
+    reverted = "reverted"
+    file_deleted = "fileDeleted"
+    file_missing = "fileMissing"
 
 
 class ImageDetail(Enum):
@@ -6857,6 +6998,73 @@ class CancelLoginAccountResponse(BaseModel):
     status: CancelLoginAccountStatus
 
 
+class ChangeHunk(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    conflict: Annotated[
+        str | None, Field(description="Why rollback was refused; no forced rollback is available.")
+    ] = None
+    id: str
+    new_lines: Annotated[int, Field(alias="newLines", ge=0)]
+    new_start: Annotated[
+        int,
+        Field(
+            alias="newStart",
+            description="Historical turn-final coordinate, with the same unified diff convention.",
+            ge=0,
+        ),
+    ]
+    old_lines: Annotated[int, Field(alias="oldLines", ge=0)]
+    old_start: Annotated[
+        int,
+        Field(
+            alias="oldStart",
+            description="Historical baseline -> turn-final unified diff coordinates, never live filesystem positions. Nonempty starts are one-based; empty ranges use the preceding line number (zero at BOF). Use hunk/locate for navigation.",
+            ge=0,
+        ),
+    ]
+    patch: Annotated[
+        str,
+        Field(
+            description="Unified diff hunk, preserving line endings and missing-final-newline markers."
+        ),
+    ]
+    state: ChangeReviewState
+
+
+class ChangeSetFile(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    after_content: Annotated[str | None, Field(alias="afterContent")] = None
+    after_hash: Annotated[str | None, Field(alias="afterHash")] = None
+    before_content: Annotated[
+        str | None,
+        Field(
+            alias="beforeContent",
+            description="UTF-8 content for native IDE diffs. Null means absent or unsupported.",
+        ),
+    ] = None
+    before_hash: Annotated[str | None, Field(alias="beforeHash")] = None
+    change_type: Annotated[ChangeSetFileKind, Field(alias="changeType")]
+    environment_id: Annotated[str, Field(alias="environmentId")]
+    hunks: list[ChangeHunk]
+    id: str
+    path: Annotated[
+        str,
+        Field(description="Absolute path URI, consistent with executor environment addressing."),
+    ]
+    state: ChangeReviewState
+    unsupported_reason: Annotated[
+        str | None,
+        Field(
+            alias="unsupportedReason",
+            description="Unsupported files are visible but cannot be accepted or reverted.",
+        ),
+    ] = None
+
+
 class InitializeRequest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -6864,6 +7072,97 @@ class InitializeRequest(BaseModel):
     id: RequestId
     method: Annotated[Literal["initialize"], Field(title="InitializeRequestMethod")]
     params: InitializeParams
+
+
+class ChangeSetListRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[Literal["changeSet/list"], Field(title="ChangeSet/listRequestMethod")]
+    params: ChangeSetListParams
+
+
+class ChangeSetReadRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[Literal["changeSet/read"], Field(title="ChangeSet/readRequestMethod")]
+    params: ChangeSetReadParams
+
+
+class ChangeSetHunkLocateRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[
+        Literal["changeSet/hunk/locate"], Field(title="ChangeSet/hunk/locateRequestMethod")
+    ]
+    params: ChangeSetHunkLocateParams
+
+
+class ChangeSetHunkAcceptRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[
+        Literal["changeSet/hunk/accept"], Field(title="ChangeSet/hunk/acceptRequestMethod")
+    ]
+    params: ChangeSetHunkReviewParams
+
+
+class ChangeSetHunkRevertRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[
+        Literal["changeSet/hunk/revert"], Field(title="ChangeSet/hunk/revertRequestMethod")
+    ]
+    params: ChangeSetHunkReviewParams
+
+
+class ChangeSetFileAcceptRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[
+        Literal["changeSet/file/accept"], Field(title="ChangeSet/file/acceptRequestMethod")
+    ]
+    params: ChangeSetFileReviewParams
+
+
+class ChangeSetFileRevertRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[
+        Literal["changeSet/file/revert"], Field(title="ChangeSet/file/revertRequestMethod")
+    ]
+    params: ChangeSetFileReviewParams
+
+
+class ChangeSetAcceptRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[Literal["changeSet/accept"], Field(title="ChangeSet/acceptRequestMethod")]
+    params: ChangeSetReviewParams
+
+
+class ChangeSetRevertRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[Literal["changeSet/revert"], Field(title="ChangeSet/revertRequestMethod")]
+    params: ChangeSetReviewParams
 
 
 class ThreadResumeRequest(BaseModel):
@@ -8556,6 +8855,34 @@ class HooksListResponse(BaseModel):
         populate_by_name=True,
     )
     data: list[HooksListEntry]
+
+
+class NotPresentHunkLocationResult(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    reason: HunkNotPresentReason
+    status: Annotated[Literal["notPresent"], Field(title="NotPresentHunkLocationResultStatus")]
+
+
+class HunkLocationResult(
+    RootModel[
+        LocatedHunkLocationResult
+        | NotPresentHunkLocationResult
+        | ConflictHunkLocationResult
+        | UnsupportedHunkLocationResult
+    ]
+):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: Annotated[
+        LocatedHunkLocationResult
+        | NotPresentHunkLocationResult
+        | ConflictHunkLocationResult
+        | UnsupportedHunkLocationResult,
+        Field(description="Read-only, point-in-time location; never changes review decisions."),
+    ]
 
 
 class ListMcpServerStatusParams(BaseModel):
@@ -10570,6 +10897,81 @@ class AppsListResponse(BaseModel):
     ] = None
 
 
+class ChangeSet(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    coverage: Annotated[
+        str,
+        Field(
+            description="MVP coverage is `applyPatchOnly`: arbitrary shell/MCP writes are not tracked."
+        ),
+    ]
+    files: list[ChangeSetFile]
+    id: str
+    revision: Annotated[
+        int,
+        Field(
+            description="Monotonic decision revision; clients can discard delayed notifications.",
+            ge=0,
+        ),
+    ]
+    state: ChangeReviewState
+    storage: Annotated[
+        str, Field(description="Storage is `sessionMemory`: restart/unload loses review data.")
+    ]
+    thread_id: Annotated[str, Field(alias="threadId")]
+    turn_id: Annotated[str, Field(alias="turnId")]
+
+
+class ChangeSetCreatedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set: Annotated[ChangeSet, Field(alias="changeSet")]
+
+
+class ChangeSetHunkLocateResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set_id: Annotated[str, Field(alias="changeSetId")]
+    file_id: Annotated[str, Field(alias="fileId")]
+    hunk_id: Annotated[str, Field(alias="hunkId")]
+    path: str
+    result: HunkLocationResult
+
+
+class ChangeSetListResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_sets: Annotated[list[ChangeSet], Field(alias="changeSets")]
+
+
+class ChangeSetReadResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set: Annotated[ChangeSet | None, Field(alias="changeSet")] = None
+
+
+class ChangeSetReviewResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set: Annotated[ChangeSet, Field(alias="changeSet")]
+    results: list[ChangeSetHunkResult]
+
+
+class ChangeSetUpdatedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    change_set: Annotated[ChangeSet, Field(alias="changeSet")]
+    results: list[ChangeSetHunkResult]
+
+
 class ThreadStartRequest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -11281,6 +11683,40 @@ class HookCompletedServerNotification(BaseModel):
     ] = None
     method: Annotated[Literal["hook/completed"], Field(title="Hook/completedNotificationMethod")]
     params: HookCompletedNotification
+
+
+class ChangeSetCreatedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["changeSet/created"], Field(title="ChangeSet/createdNotificationMethod")
+    ]
+    params: ChangeSetCreatedNotification
+
+
+class ChangeSetUpdatedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["changeSet/updated"], Field(title="ChangeSet/updatedNotificationMethod")
+    ]
+    params: ChangeSetUpdatedNotification
 
 
 class TurnPlanUpdatedServerNotification(BaseModel):
@@ -12592,6 +13028,15 @@ class ExternalAgentConfigImportRecordHistoryRequest(BaseModel):
 class ClientRequest(
     RootModel[
         InitializeRequest
+        | ChangeSetListRequest
+        | ChangeSetReadRequest
+        | ChangeSetHunkLocateRequest
+        | ChangeSetHunkAcceptRequest
+        | ChangeSetHunkRevertRequest
+        | ChangeSetFileAcceptRequest
+        | ChangeSetFileRevertRequest
+        | ChangeSetAcceptRequest
+        | ChangeSetRevertRequest
         | ThreadStartRequest
         | ThreadResumeRequest
         | ThreadForkRequest
@@ -12703,6 +13148,15 @@ class ClientRequest(
     )
     root: Annotated[
         InitializeRequest
+        | ChangeSetListRequest
+        | ChangeSetReadRequest
+        | ChangeSetHunkLocateRequest
+        | ChangeSetHunkAcceptRequest
+        | ChangeSetHunkRevertRequest
+        | ChangeSetFileAcceptRequest
+        | ChangeSetFileRevertRequest
+        | ChangeSetAcceptRequest
+        | ChangeSetRevertRequest
         | ThreadStartRequest
         | ThreadResumeRequest
         | ThreadForkRequest
@@ -13010,6 +13464,8 @@ class ServerNotification(
         | TurnCompletedServerNotification
         | HookCompletedServerNotification
         | TurnDiffUpdatedServerNotification
+        | ChangeSetCreatedServerNotification
+        | ChangeSetUpdatedServerNotification
         | TurnPlanUpdatedServerNotification
         | ItemStartedServerNotification
         | ItemAutoApprovalReviewStartedServerNotification
@@ -13100,6 +13556,8 @@ class ServerNotification(
         | TurnCompletedServerNotification
         | HookCompletedServerNotification
         | TurnDiffUpdatedServerNotification
+        | ChangeSetCreatedServerNotification
+        | ChangeSetUpdatedServerNotification
         | TurnPlanUpdatedServerNotification
         | ItemStartedServerNotification
         | ItemAutoApprovalReviewStartedServerNotification

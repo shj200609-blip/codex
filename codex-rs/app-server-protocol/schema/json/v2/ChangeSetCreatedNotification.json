@@ -1,0 +1,207 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ChangeHunk": {
+      "description": "An immutable diff identity with a mutable review decision.",
+      "properties": {
+        "conflict": {
+          "description": "Why rollback was refused; no forced rollback is available.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "newLines": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "newStart": {
+          "description": "Historical turn-final coordinate, with the same unified diff convention.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "oldLines": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "oldStart": {
+          "description": "Historical baseline -> turn-final unified diff coordinates, never live filesystem positions. Nonempty starts are one-based; empty ranges use the preceding line number (zero at BOF). Use hunk/locate for navigation.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "patch": {
+          "description": "Unified diff hunk, preserving line endings and missing-final-newline markers.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/ChangeReviewState"
+        }
+      },
+      "required": [
+        "id",
+        "newLines",
+        "newStart",
+        "oldLines",
+        "oldStart",
+        "patch",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ChangeReviewState": {
+      "description": "Aggregate review state. Mixed terminal decisions are `Reviewed`.",
+      "enum": [
+        "pending",
+        "accepted",
+        "reverted",
+        "conflict",
+        "reviewed",
+        "unsupported"
+      ],
+      "type": "string"
+    },
+    "ChangeSet": {
+      "description": "One finalized logical change set per turn. Review does not regenerate IDs.",
+      "properties": {
+        "coverage": {
+          "description": "MVP coverage is `applyPatchOnly`: arbitrary shell/MCP writes are not tracked.",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/definitions/ChangeSetFile"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "Monotonic decision revision; clients can discard delayed notifications.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/definitions/ChangeReviewState"
+        },
+        "storage": {
+          "description": "Storage is `sessionMemory`: restart/unload loses review data.",
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "coverage",
+        "files",
+        "id",
+        "revision",
+        "state",
+        "storage",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "ChangeSetFile": {
+      "description": "A file's first baseline and last exact Codex result, never Git HEAD.",
+      "properties": {
+        "afterContent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "afterHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beforeContent": {
+          "description": "UTF-8 content for native IDE diffs. Null means absent or unsupported.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beforeHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changeType": {
+          "$ref": "#/definitions/ChangeSetFileKind"
+        },
+        "environmentId": {
+          "type": "string"
+        },
+        "hunks": {
+          "items": {
+            "$ref": "#/definitions/ChangeHunk"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute path URI, consistent with executor environment addressing.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/ChangeReviewState"
+        },
+        "unsupportedReason": {
+          "description": "Unsupported files are visible but cannot be accepted or reverted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "changeType",
+        "environmentId",
+        "hunks",
+        "id",
+        "path",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ChangeSetFileKind": {
+      "description": "Text file presence relative to its first mutation in the turn.",
+      "enum": [
+        "added",
+        "modified",
+        "deleted"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Published once after a tracked turn finishes or is interrupted.",
+  "properties": {
+    "changeSet": {
+      "$ref": "#/definitions/ChangeSet"
+    }
+  },
+  "required": [
+    "changeSet"
+  ],
+  "title": "ChangeSetCreatedNotification",
+  "type": "object"
+}

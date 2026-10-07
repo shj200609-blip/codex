@@ -51,6 +51,12 @@ pub struct TurnDiffTracker {
     display_roots_by_environment: HashMap<String, PathUri>,
     baseline_by_path: HashMap<TrackedPath, TrackedContent>,
     current_by_path: HashMap<TrackedPath, TrackedContent>,
+    // Presence is part of the baseline: absent paths must stay absent even after
+    // add/delete/add sequences within the same turn.
+    seen_paths: HashSet<TrackedPath>,
+    review_unsupported: HashMap<TrackedPath, String>,
+    review_unsupported_environments: HashSet<String>,
+    review_disabled_reason: Option<String>,
     origin_by_current_path: HashMap<TrackedPath, TrackedPath>,
     next_revision: u64,
     rendered_diffs: HashMap<DiffCacheKey, Option<String>>,
@@ -66,6 +72,10 @@ impl Default for TurnDiffTracker {
             display_roots_by_environment: HashMap::new(),
             baseline_by_path: HashMap::new(),
             current_by_path: HashMap::new(),
+            seen_paths: HashSet::new(),
+            review_unsupported: HashMap::new(),
+            review_unsupported_environments: HashSet::new(),
+            review_disabled_reason: None,
             origin_by_current_path: HashMap::new(),
             next_revision: 0,
             rendered_diffs: HashMap::new(),
@@ -94,13 +104,12 @@ impl TurnDiffTracker {
             return;
         }
 
+        for change in delta.changes() {
+            self.apply_change(environment_id, change);
+        }
         if !delta.is_exact() {
             self.invalidate();
             return;
-        }
-
-        for change in delta.changes() {
-            self.apply_change(environment_id, change);
         }
         self.refresh_unified_diff();
     }
@@ -117,6 +126,43 @@ impl TurnDiffTracker {
 
     pub(crate) fn has_unified_diff(&self) -> bool {
         self.unified_diff.is_some()
+    }
+
+    pub(crate) fn mark_review_environment_unsupported(&mut self, environment_id: &str) {
+        self.review_unsupported_environments
+            .insert(environment_id.to_string());
+    }
+
+    pub(crate) fn disable_review(&mut self, reason: &str) {
+        self.review_disabled_reason = Some(reason.to_string());
+    }
+
+    /// Reuses the exact before/after content captured by the patch engine, which
+    /// reads the baseline before its first filesystem mutation, not from Git.
+    pub(crate) fn review_files(&self) -> Vec<crate::change_set::TrackedFile> {
+        let mut paths = self.seen_paths.iter().collect::<Vec<_>>();
+        paths.sort_by_key(|path| (path.environment_id.clone(), path.path.to_string()));
+        paths
+            .into_iter()
+            .map(|path| crate::change_set::TrackedFile {
+                environment_id: path.environment_id.clone(),
+                path: path.path.clone(),
+                before: self.baseline_by_path.get(path).map(|c| c.content.clone()),
+                after: self.current_by_path.get(path).map(|c| c.content.clone()),
+                unsupported: if let Some(reason) = &self.review_disabled_reason {
+                    Some(reason.clone())
+                } else if !self.valid {
+                    Some("Patch result was not exact; rollback is unavailable".to_string())
+                } else if self
+                    .review_unsupported_environments
+                    .contains(&path.environment_id)
+                {
+                    Some("Remote environment review is not supported".to_string())
+                } else {
+                    self.review_unsupported.get(path).cloned()
+                },
+            })
+            .collect()
     }
 
     fn refresh_unified_diff(&mut self) {
@@ -183,6 +229,37 @@ impl TurnDiffTracker {
 
     fn apply_change(&mut self, environment_id: &str, change: &AppliedPatchChange) {
         let source_path = TrackedPath::new(environment_id, &change.path);
+        let (observed_before, destination) = match &change.change {
+            AppliedPatchFileChange::Add {
+                overwritten_content,
+                ..
+            } => (overwritten_content.as_deref(), None),
+            AppliedPatchFileChange::Delete { content } => (Some(content.as_str()), None),
+            AppliedPatchFileChange::Update {
+                old_content,
+                move_path,
+                ..
+            } => (Some(old_content.as_str()), move_path.as_ref()),
+        };
+        if self.seen_paths.contains(&source_path)
+            && self
+                .current_by_path
+                .get(&source_path)
+                .map(|c| c.content.as_str())
+                != observed_before
+        {
+            self.review_unsupported.insert(
+                source_path.clone(),
+                "Content changed outside tracked patches between mutations".to_string(),
+            );
+        }
+        if let Some(destination) = destination {
+            let destination = TrackedPath::new(environment_id, destination);
+            let reason = "Rename review is not supported".to_string();
+            self.review_unsupported
+                .insert(source_path.clone(), reason.clone());
+            self.review_unsupported.insert(destination, reason);
+        }
         match &change.change {
             AppliedPatchFileChange::Add {
                 content,
@@ -207,12 +284,17 @@ impl TurnDiffTracker {
                 )
             }
         }
+        self.seen_paths
+            .insert(TrackedPath::new(environment_id, &change.path));
+        if let Some(destination) = destination {
+            self.seen_paths
+                .insert(TrackedPath::new(environment_id, destination));
+        }
     }
 
     fn apply_add(&mut self, path: TrackedPath, content: &str, overwritten_content: Option<&str>) {
         self.origin_by_current_path.remove(&path);
-        if !self.current_by_path.contains_key(&path)
-            && !self.baseline_by_path.contains_key(&path)
+        if !self.seen_paths.contains(&path)
             && let Some(overwritten_content) = overwritten_content
         {
             let overwritten_content = self.tracked_content(overwritten_content);
@@ -224,9 +306,8 @@ impl TurnDiffTracker {
     }
 
     fn apply_delete(&mut self, path: TrackedPath, content: &str) {
-        if self.current_by_path.remove(&path).is_none()
-            && !self.baseline_by_path.contains_key(&path)
-        {
+        self.current_by_path.remove(&path);
+        if !self.seen_paths.contains(&path) {
             let content = self.tracked_content(content);
             self.baseline_by_path.insert(path.clone(), content);
         }
@@ -241,9 +322,7 @@ impl TurnDiffTracker {
         overwritten_move_content: Option<&str>,
         new_content: &str,
     ) {
-        if !self.current_by_path.contains_key(&source_path)
-            && !self.baseline_by_path.contains_key(&source_path)
-        {
+        if !self.seen_paths.contains(&source_path) {
             let old_content = self.tracked_content(old_content);
             self.baseline_by_path
                 .insert(source_path.clone(), old_content);
@@ -251,8 +330,7 @@ impl TurnDiffTracker {
 
         match move_path {
             Some(dest_path) => {
-                if !self.current_by_path.contains_key(&dest_path)
-                    && !self.baseline_by_path.contains_key(&dest_path)
+                if !self.seen_paths.contains(&dest_path)
                     && let Some(overwritten_move_content) = overwritten_move_content
                 {
                     let overwritten_move_content = self.tracked_content(overwritten_move_content);

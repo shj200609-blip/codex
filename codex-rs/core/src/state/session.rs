@@ -64,6 +64,12 @@ impl ReasoningEffortPin {
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
 pub(crate) struct SessionState {
+    pub(crate) change_set_trackers:
+        std::collections::HashMap<String, crate::tools::context::SharedTurnDiffTracker>,
+    pub(crate) change_sets: std::collections::HashMap<
+        String,
+        std::sync::Arc<tokio::sync::Mutex<crate::change_set::ChangeSetReview>>,
+    >,
     pub(crate) session_configuration: SessionConfiguration,
     /// Plugin selection of the last admitted task; settings updates take effect on the next task.
     pub(crate) active_disabled_plugin_ids: Vec<String>,
@@ -117,6 +123,8 @@ impl SessionState {
         history: ContextManager,
     ) -> Self {
         Self {
+            change_set_trackers: Default::default(),
+            change_sets: Default::default(),
             active_disabled_plugin_ids: Vec::new(),
             session_configuration,
             base_instructions_provenance: None,

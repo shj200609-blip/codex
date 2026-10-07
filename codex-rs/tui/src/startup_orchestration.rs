@@ -13,6 +13,18 @@ pub(super) async fn run_main_inner(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
+    // Loopback shared servers use this filesystem; retain the terminal workspace identity.
+    if explicit_remote_endpoint
+        .as_ref()
+        .is_some_and(is_local_shared_endpoint)
+    {
+        let terminal_cwd = std::env::current_dir()?;
+        let selected_cwd = cli
+            .cwd
+            .as_ref()
+            .map_or(terminal_cwd.clone(), |cwd| terminal_cwd.join(cwd));
+        cli.cwd = Some(selected_cwd.canonicalize()?);
+    }
     if cli.no_daemon && explicit_remote_endpoint.is_some() {
         return Err(std::io::Error::other(
             "--no-daemon cannot be used with --remote.",
@@ -947,4 +959,18 @@ pub(super) async fn run_main_inner(
     }
 
     app_result
+}
+
+fn is_local_shared_endpoint(endpoint: &RemoteAppServerEndpoint) -> bool {
+    match endpoint {
+        RemoteAppServerEndpoint::UnixSocket { .. } => true,
+        RemoteAppServerEndpoint::WebSocket { websocket_url, .. } => Url::parse(websocket_url)
+            .ok()
+            .is_some_and(|url| match url.host() {
+                Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+                Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
+                Some(url::Host::Ipv6(addr)) => addr.is_loopback(),
+                None => false,
+            }),
+    }
 }

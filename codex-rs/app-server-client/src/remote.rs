@@ -64,7 +64,7 @@ use url::Url;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
-const REMOTE_APP_SERVER_MAX_WEBSOCKET_MESSAGE_SIZE: usize = 128 << 20;
+pub(super) const REMOTE_APP_SERVER_MAX_WEBSOCKET_MESSAGE_SIZE: usize = 128 << 20;
 // Tungstenite still needs an HTTP request URI for the WebSocket handshake;
 // the bytes travel over the Unix socket, not TCP.
 const UDS_WEBSOCKET_HANDSHAKE_URL: &str = "ws://localhost/rpc";
@@ -171,7 +171,7 @@ pub struct RemoteAppServerRequestHandle {
     command_tx: mpsc::Sender<RemoteClientCommand>,
 }
 
-enum SocketPeerPolicy {
+pub(super) enum SocketPeerPolicy {
     ExplicitEndpoint,
     #[cfg(windows)]
     NonElevatedCurrentUser,
@@ -695,7 +695,7 @@ impl RemoteAppServerRequestHandle {
     }
 }
 
-async fn connect_websocket_endpoint(
+pub(super) async fn connect_websocket_endpoint(
     websocket_url: String,
     auth_token: Option<String>,
 ) -> IoResult<(String, WebSocketStream<MaybeTlsStream<TcpStream>>)> {
@@ -758,7 +758,7 @@ async fn connect_websocket_endpoint(
     Ok((websocket_url, stream))
 }
 
-async fn connect_unix_socket_endpoint(
+pub(super) async fn connect_unix_socket_endpoint(
     socket_path: AbsolutePathBuf,
     peer_policy: SocketPeerPolicy,
 ) -> IoResult<(String, WebSocketStream<UnixStream>)> {

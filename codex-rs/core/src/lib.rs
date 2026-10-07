@@ -7,6 +7,7 @@
 
 mod apply_patch;
 mod apps;
+pub mod change_set;
 mod client;
 mod client_common;
 mod model_request;

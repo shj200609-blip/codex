@@ -235,6 +235,49 @@ pub struct BackgroundTerminalInfo {
 /// Conduit for the bidirectional stream of messages that compose a thread
 /// (formerly called a conversation) in Codex.
 impl CodexThread {
+    /// Read a finalized turn's Git-independent review. Live turns are unavailable.
+    /// Data survives client reconnects, but not thread unload or process restart.
+    pub async fn list_change_sets(&self) -> Vec<crate::change_set::ChangeSet> {
+        self.session.list_change_sets().await
+    }
+
+    pub async fn read_change_set(&self, turn_id: &str) -> Option<crate::change_set::ChangeSet> {
+        self.session.read_change_set(turn_id).await
+    }
+
+    /// Read a hunk's current filesystem location without changing review state.
+    pub async fn locate_change_set_hunk(
+        &self,
+        turn_id: &str,
+        change_set_id: &str,
+        file_id: &str,
+        hunk_id: &str,
+    ) -> Result<crate::change_set::ChangeSetHunkLocateResponse, String> {
+        self.session
+            .locate_change_set_hunk(turn_id, change_set_id, file_id, hunk_id)
+            .await
+    }
+
+    /// Review only pending hunks. Accepted/reverted/conflict states are terminal.
+    /// Holding admission prevents a new turn in this thread during review.
+    pub async fn review_change_set(
+        &self,
+        turn_id: &str,
+        change_set_id: &str,
+        selection: crate::change_set::ReviewSelection<'_>,
+        action: crate::change_set::ReviewAction,
+    ) -> Result<
+        (
+            crate::change_set::ChangeSet,
+            Vec<crate::change_set::ChangeSetHunkResult>,
+        ),
+        String,
+    > {
+        self.session
+            .review_change_set(turn_id, change_set_id, selection, action)
+            .await
+    }
+
     pub(crate) fn new(
         session: Arc<Session>,
         io: SessionIo,

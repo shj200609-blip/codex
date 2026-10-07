@@ -540,6 +540,7 @@ mod account_processor;
 mod apps_processor;
 mod bedrock_auth;
 mod catalog_processor;
+mod change_sets;
 mod command_exec_processor;
 mod config_processor;
 #[cfg(test)]

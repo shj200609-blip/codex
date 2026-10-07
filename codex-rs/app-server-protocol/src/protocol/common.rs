@@ -546,6 +546,57 @@ client_request_definitions! {
     },
 
     /// NEW APIs
+    ChangeSetList => "changeSet/list" {
+        params: v2::ChangeSetListParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ChangeSetListResponse,
+    },
+    ChangeSetRead => "changeSet/read" {
+        params: v2::ChangeSetReadParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ChangeSetReadResponse,
+    },
+    ChangeSetHunkLocate => "changeSet/hunk/locate" {
+        params: v2::ChangeSetHunkLocateParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ChangeSetHunkLocateResponse,
+    },
+    ChangeSetHunkAccept => "changeSet/hunk/accept" {
+        params: v2::ChangeSetHunkReviewParams,
+        serialization: thread_id(params.thread_id),
+        manual_payload_conversion: manual,
+        response: v2::ChangeSetReviewResponse,
+    },
+    ChangeSetHunkRevert => "changeSet/hunk/revert" {
+        params: v2::ChangeSetHunkReviewParams,
+        serialization: thread_id(params.thread_id),
+        manual_payload_conversion: manual,
+        response: v2::ChangeSetReviewResponse,
+    },
+    ChangeSetFileAccept => "changeSet/file/accept" {
+        params: v2::ChangeSetFileReviewParams,
+        serialization: thread_id(params.thread_id),
+        manual_payload_conversion: manual,
+        response: v2::ChangeSetReviewResponse,
+    },
+    ChangeSetFileRevert => "changeSet/file/revert" {
+        params: v2::ChangeSetFileReviewParams,
+        serialization: thread_id(params.thread_id),
+        manual_payload_conversion: manual,
+        response: v2::ChangeSetReviewResponse,
+    },
+    ChangeSetAccept => "changeSet/accept" {
+        params: v2::ChangeSetReviewParams,
+        serialization: thread_id(params.thread_id),
+        manual_payload_conversion: manual,
+        response: v2::ChangeSetReviewResponse,
+    },
+    ChangeSetRevert => "changeSet/revert" {
+        params: v2::ChangeSetReviewParams,
+        serialization: thread_id(params.thread_id),
+        manual_payload_conversion: manual,
+        response: v2::ChangeSetReviewResponse,
+    },
     // Thread lifecycle
     // Uses `inspect_params` because only some fields are experimental.
     ThreadStart => "thread/start" {
@@ -1966,6 +2017,8 @@ server_notification_definitions! {
     TurnCompleted => "turn/completed" (v2::TurnCompletedNotification),
     HookCompleted => "hook/completed" (v2::HookCompletedNotification),
     TurnDiffUpdated => "turn/diff/updated" (v2::TurnDiffUpdatedNotification),
+    ChangeSetCreated => "changeSet/created" (v2::ChangeSetCreatedNotification),
+    ChangeSetUpdated => "changeSet/updated" (v2::ChangeSetUpdatedNotification),
     TurnPlanUpdated => "turn/plan/updated" (v2::TurnPlanUpdatedNotification),
     ItemStarted => "item/started" (v2::ItemStartedNotification),
     ItemGuardianApprovalReviewStarted => "item/autoApprovalReview/started" (v2::ItemGuardianApprovalReviewStartedNotification),

@@ -1,0 +1,16 @@
+src/**
+test/**
+scripts/**
+node_modules/**
+tsconfig.json
+build.mjs
+*.code-workspace
+dist/*.map
+dist/*Acceptance.js
+package-lock.json
+acceptance-results/**
+*.vsix
+demo-workspace/**
+ui-demo-workspace/**
+test.txt
+MANUAL-ACCEPTANCE.md

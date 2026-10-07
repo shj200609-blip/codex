@@ -1718,6 +1718,487 @@
         }
       ]
     },
+    "ChangeHunk": {
+      "description": "An immutable diff identity with a mutable review decision.",
+      "properties": {
+        "conflict": {
+          "description": "Why rollback was refused; no forced rollback is available.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "newLines": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "newStart": {
+          "description": "Historical turn-final coordinate, with the same unified diff convention.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "oldLines": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "oldStart": {
+          "description": "Historical baseline -> turn-final unified diff coordinates, never live filesystem positions. Nonempty starts are one-based; empty ranges use the preceding line number (zero at BOF). Use hunk/locate for navigation.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "patch": {
+          "description": "Unified diff hunk, preserving line endings and missing-final-newline markers.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/ChangeReviewState"
+        }
+      },
+      "required": [
+        "id",
+        "newLines",
+        "newStart",
+        "oldLines",
+        "oldStart",
+        "patch",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ChangeReviewState": {
+      "description": "Aggregate review state. Mixed terminal decisions are `Reviewed`.",
+      "enum": [
+        "pending",
+        "accepted",
+        "reverted",
+        "conflict",
+        "reviewed",
+        "unsupported"
+      ],
+      "type": "string"
+    },
+    "ChangeSet": {
+      "description": "One finalized logical change set per turn. Review does not regenerate IDs.",
+      "properties": {
+        "coverage": {
+          "description": "MVP coverage is `applyPatchOnly`: arbitrary shell/MCP writes are not tracked.",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/definitions/ChangeSetFile"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "Monotonic decision revision; clients can discard delayed notifications.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/definitions/ChangeReviewState"
+        },
+        "storage": {
+          "description": "Storage is `sessionMemory`: restart/unload loses review data.",
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "coverage",
+        "files",
+        "id",
+        "revision",
+        "state",
+        "storage",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "ChangeSetCreatedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Published once after a tracked turn finishes or is interrupted.",
+      "properties": {
+        "changeSet": {
+          "$ref": "#/definitions/ChangeSet"
+        }
+      },
+      "required": [
+        "changeSet"
+      ],
+      "title": "ChangeSetCreatedNotification",
+      "type": "object"
+    },
+    "ChangeSetFile": {
+      "description": "A file's first baseline and last exact Codex result, never Git HEAD.",
+      "properties": {
+        "afterContent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "afterHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beforeContent": {
+          "description": "UTF-8 content for native IDE diffs. Null means absent or unsupported.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beforeHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changeType": {
+          "$ref": "#/definitions/ChangeSetFileKind"
+        },
+        "environmentId": {
+          "type": "string"
+        },
+        "hunks": {
+          "items": {
+            "$ref": "#/definitions/ChangeHunk"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute path URI, consistent with executor environment addressing.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/ChangeReviewState"
+        },
+        "unsupportedReason": {
+          "description": "Unsupported files are visible but cannot be accepted or reverted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "changeType",
+        "environmentId",
+        "hunks",
+        "id",
+        "path",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ChangeSetFileKind": {
+      "description": "Text file presence relative to its first mutation in the turn.",
+      "enum": [
+        "added",
+        "modified",
+        "deleted"
+      ],
+      "type": "string"
+    },
+    "ChangeSetFileReviewParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Accept/revert Pending hunks in one file, preserving Accepted and Conflict.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "fileId",
+        "threadId",
+        "turnId"
+      ],
+      "title": "ChangeSetFileReviewParams",
+      "type": "object"
+    },
+    "ChangeSetHunkLocateParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Query live filesystem coordinates without changing review state or emitting notifications. Historical oldStart/newStart remain unchanged.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "hunkId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "fileId",
+        "hunkId",
+        "threadId",
+        "turnId"
+      ],
+      "title": "ChangeSetHunkLocateParams",
+      "type": "object"
+    },
+    "ChangeSetHunkLocateResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Path uses the same absolute executor path URI as ChangeSetFile.path.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "hunkId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/definitions/HunkLocationResult"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "fileId",
+        "hunkId",
+        "path",
+        "result"
+      ],
+      "title": "ChangeSetHunkLocateResponse",
+      "type": "object"
+    },
+    "ChangeSetHunkResult": {
+      "description": "Per-hunk outcome, including unchanged accepted/reverted/conflicted hunks in bulk calls.",
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "hunkId": {
+          "type": "string"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/definitions/ChangeReviewState"
+        }
+      },
+      "required": [
+        "changed",
+        "fileId",
+        "hunkId",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ChangeSetHunkReviewParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Accept/revert one Pending hunk. No client-supplied paths or patches execute.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "hunkId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "fileId",
+        "hunkId",
+        "threadId",
+        "turnId"
+      ],
+      "title": "ChangeSetHunkReviewParams",
+      "type": "object"
+    },
+    "ChangeSetListParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "List finalized review snapshots retained by this loaded session, independently of conversation history mode. This does not read persisted ChangeSets.",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ChangeSetListParams",
+      "type": "object"
+    },
+    "ChangeSetListResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "changeSets": {
+          "items": {
+            "$ref": "#/definitions/ChangeSet"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "changeSets"
+      ],
+      "title": "ChangeSetListResponse",
+      "type": "object"
+    },
+    "ChangeSetReadParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Read session-local review data after turn completion or interruption.",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "title": "ChangeSetReadParams",
+      "type": "object"
+    },
+    "ChangeSetReadResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Null means no finalized ChangeSet is retained (live turn, unloaded session, restarted process, or a task that did not use the patch tracker).",
+      "properties": {
+        "changeSet": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ChangeSet"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "ChangeSetReadResponse",
+      "type": "object"
+    },
+    "ChangeSetReviewParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Accept/revert every Pending hunk; terminal decisions are never reopened.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "threadId",
+        "turnId"
+      ],
+      "title": "ChangeSetReviewParams",
+      "type": "object"
+    },
+    "ChangeSetReviewResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Complete snapshot and individual outcomes, including partial success. A rollback conflict is a normal result, not a JSON-RPC failure. Invalid IDs and attempts to review a running thread are JSON-RPC errors.",
+      "properties": {
+        "changeSet": {
+          "$ref": "#/definitions/ChangeSet"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/definitions/ChangeSetHunkResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "changeSet",
+        "results"
+      ],
+      "title": "ChangeSetReviewResponse",
+      "type": "object"
+    },
+    "ChangeSetUpdatedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Publishes changed file/hunk decisions and their aggregate state together. Full snapshots allow subscribers to update without re-diffing or polling.",
+      "properties": {
+        "changeSet": {
+          "$ref": "#/definitions/ChangeSet"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/definitions/ChangeSetHunkResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "changeSet",
+        "results"
+      ],
+      "title": "ChangeSetUpdatedNotification",
+      "type": "object"
+    },
     "CliAuthCredentialsStoreMode": {
       "enum": [
         "file",
@@ -1778,6 +2259,222 @@
         },
         {
           "description": "NEW APIs",
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/list"
+              ],
+              "title": "ChangeSet/listRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetListParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/read"
+              ],
+              "title": "ChangeSet/readRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetReadParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/readRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/hunk/locate"
+              ],
+              "title": "ChangeSet/hunk/locateRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetHunkLocateParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/hunk/locateRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/hunk/accept"
+              ],
+              "title": "ChangeSet/hunk/acceptRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetHunkReviewParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/hunk/acceptRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/hunk/revert"
+              ],
+              "title": "ChangeSet/hunk/revertRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetHunkReviewParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/hunk/revertRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/file/accept"
+              ],
+              "title": "ChangeSet/file/acceptRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetFileReviewParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/file/acceptRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/file/revert"
+              ],
+              "title": "ChangeSet/file/revertRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetFileReviewParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/file/revertRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/accept"
+              ],
+              "title": "ChangeSet/acceptRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetReviewParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/acceptRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "changeSet/revert"
+              ],
+              "title": "ChangeSet/revertRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetReviewParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/revertRequest",
+          "type": "object"
+        },
+        {
           "properties": {
             "id": {
               "$ref": "#/definitions/RequestId"
@@ -6597,6 +7294,25 @@
       ],
       "type": "object"
     },
+    "CurrentHunkRangeKind": {
+      "description": "How a live range should be revealed in the current file.",
+      "oneOf": [
+        {
+          "enum": [
+            "content",
+            "deletionAnchor"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An empty created file has presence but no content lines.",
+          "enum": [
+            "filePresence"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "CyberAccessProgram": {
       "description": "Requested cyber treatment for an OpenAI model turn. Authorization and model-tier restrictions remain server-owned.",
       "enum": [
@@ -9632,6 +10348,106 @@
       ],
       "title": "HooksListResponse",
       "type": "object"
+    },
+    "HunkLocationResult": {
+      "description": "Read-only, point-in-time location; never changes review decisions.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "$ref": "#/definitions/CurrentHunkRangeKind"
+            },
+            "line_count": {
+              "description": "Current after-side lines, excluding matching context. Zero for anchors.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "start_line": {
+              "description": "One-based current line (consistent with protocol file locations). For an anchor, the insertion point before this line; EOF is N + 1.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "status": {
+              "enum": [
+                "located"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "line_count",
+            "start_line",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "$ref": "#/definitions/HunkNotPresentReason"
+            },
+            "status": {
+              "enum": [
+                "notPresent"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Exact matching failed, was ambiguous, or the filesystem could not be read.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "conflict"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "unsupported"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "status"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "HunkNotPresentReason": {
+      "enum": [
+        "reverted",
+        "fileDeleted",
+        "fileMissing"
+      ],
+      "type": "string"
     },
     "ImageDetail": {
       "enum": [
@@ -16616,6 +17432,46 @@
             "params"
           ],
           "title": "Turn/diff/updatedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "changeSet/created"
+              ],
+              "title": "ChangeSet/createdNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetCreatedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/createdNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "changeSet/updated"
+              ],
+              "title": "ChangeSet/updatedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ChangeSetUpdatedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "ChangeSet/updatedNotification",
           "type": "object"
         },
         {

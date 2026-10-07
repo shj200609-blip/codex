@@ -138,6 +138,20 @@ struct CommandExecutionCompletionItem {
     command_actions: Vec<V2ParsedCommand>,
 }
 
+async fn publish_change_set(
+    thread: &CodexThread,
+    turn_id: &str,
+    outgoing: &ThreadScopedOutgoingMessageSender,
+) {
+    if let Some(change_set) = thread.read_change_set(turn_id).await {
+        outgoing
+            .send_server_notification(ServerNotification::ChangeSetCreated(
+                codex_app_server_protocol::ChangeSetCreatedNotification { change_set },
+            ))
+            .await;
+    }
+}
+
 pub(crate) async fn apply_bespoke_event_handling(
     event: Event,
     conversation_id: ThreadId,
@@ -183,6 +197,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
         EventMsg::TurnComplete(turn_complete_event) => {
+            publish_change_set(&conversation, &event_turn_id, &outgoing).await;
             // All per-thread requests are bound to a turn, so abort them.
             outgoing.abort_pending_server_requests().await;
             respond_to_pending_interrupts(&thread_state, &outgoing).await;
@@ -1202,6 +1217,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
         // If this is a TurnAborted, reply to any pending interrupt requests.
         EventMsg::TurnAborted(turn_aborted_event) => {
+            publish_change_set(&conversation, &event_turn_id, &outgoing).await;
             // All per-thread requests are bound to a turn, so abort them.
             outgoing.abort_pending_server_requests().await;
             respond_to_pending_interrupts(&thread_state, &outgoing).await;

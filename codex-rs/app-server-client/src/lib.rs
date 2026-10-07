@@ -18,6 +18,7 @@
 
 mod path;
 mod remote;
+mod stdio_proxy;
 
 use std::error::Error;
 use std::fmt;
@@ -67,6 +68,7 @@ pub use crate::path::AppServerPath;
 pub use crate::remote::RemoteAppServerClient;
 pub use crate::remote::RemoteAppServerConnectArgs;
 pub use crate::remote::RemoteAppServerEndpoint;
+pub use crate::stdio_proxy::run_stdio_proxy;
 
 /// Transitional access to core-only embedded app-server types.
 ///

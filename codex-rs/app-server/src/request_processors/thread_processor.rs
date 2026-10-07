@@ -957,7 +957,7 @@ impl ThreadRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
-    async fn load_thread(
+    pub(super) async fn load_thread(
         &self,
         thread_id: &str,
     ) -> Result<(ThreadId, Arc<CodexThread>), JSONRPCErrorError> {
@@ -1005,6 +1005,7 @@ impl ThreadRequestProcessor {
     }
 
     async fn finalize_thread_teardown(&self, thread_id: ThreadId) {
+        self.outgoing.forget_thread_producer(thread_id).await;
         self.pending_thread_unloads.lock().await.remove(&thread_id);
         self.outgoing
             .cancel_requests_for_thread(thread_id, /*error*/ None)
@@ -1492,6 +1493,10 @@ impl ThreadRequestProcessor {
             .thread_state_manager
             .try_add_connection_to_thread(thread_id, request_id.connection_id)
             .await;
+        listener_task_context
+            .outgoing
+            .claim_thread_producer(thread_id, request_id.connection_id)
+            .await?;
         let create_thread_started_at = std::time::Instant::now();
         let new_thread = listener_task_context
             .thread_manager
@@ -3617,6 +3622,9 @@ impl ThreadRequestProcessor {
                 .upsert_thread(&thread_id.to_string())
                 .await;
             if let Some(parent_thread_id) = config_snapshot.parent_thread_id {
+                self.outgoing
+                    .inherit_thread_producer(thread_id, parent_thread_id)
+                    .await;
                 raw_events_enabled = self
                     .thread_state_manager
                     .thread_state(parent_thread_id)
@@ -4022,6 +4030,9 @@ impl ThreadRequestProcessor {
                     return Ok(ControlFlow::Break(()));
                 };
                 let request_id = request_id.clone();
+                self.outgoing
+                    .claim_thread_producer(thread_id, request_id.connection_id)
+                    .await?;
                 if let Err(err) = Self::set_app_server_client_info(
                     codex_thread.as_ref(),
                     app_server_client_name,
@@ -4286,6 +4297,68 @@ impl ThreadRequestProcessor {
         app_server_client_version: Option<String>,
         cold_resume_history: Option<&[RolloutItem]>,
     ) -> Result<RunningThreadResumeResult, JSONRPCErrorError> {
+        // Metadata-only observation joins the live listener directly. Fresh and ephemeral
+        // threads need not have a rollout; never cold-load another Core to subscribe.
+        if params.exclude_turns
+            && params.initial_turns_page.is_none()
+            && params.history.is_none()
+            && params.path.is_none()
+            && let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
+            && let Ok(thread) = self.thread_manager.get_thread(thread_id).await
+        {
+            let config_snapshot = thread.config_snapshot().await;
+            if collect_resume_override_mismatches(params, &config_snapshot).is_empty() {
+                let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+                self.ensure_listener_task_running(
+                    thread_id,
+                    Arc::clone(&thread),
+                    Arc::clone(&thread_state),
+                )
+                .await?;
+                let mut thread_summary =
+                    build_thread_from_loaded_snapshot(thread_id, &config_snapshot, &thread);
+                self.attach_thread_name(thread_id, &mut thread_summary)
+                    .await;
+                let instruction_sources = thread.legacy_instruction_sources().await;
+                let (emit_thread_goal_update, thread_goal_state_db) = self
+                    .thread_goal_processor
+                    .pending_resume_goal_state(&thread)
+                    .await;
+                let listener_command_tx = thread_state
+                    .lock()
+                    .await
+                    .listener_command_tx()
+                    .ok_or_else(|| internal_error("thread listener is not running"))?;
+                let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+                listener_command_tx
+                    .send(
+                        crate::thread_state::ThreadListenerCommand::SendThreadResumeResponse {
+                            request: Box::new(crate::thread_state::PendingThreadResumeRequest {
+                                request_id: request_id.clone(),
+                                history_items: Vec::new(),
+                                cold_resume_token_usage_turn_id: None,
+                                config_snapshot,
+                                instruction_sources,
+                                thread_summary,
+                                emit_thread_goal_update,
+                                thread_goal_state_db,
+                                include_turns: false,
+                                initial_turns_page: None,
+                                paginated_turns: None,
+                                paginated_initial_turns_page: None,
+                                paginated_initial_turns_page_with_active_slot: None,
+                                resume_cursor_store: None,
+                                redact_resume_payloads: should_redact_thread_resume_payloads(
+                                    app_server_client_name.as_deref(),
+                                ),
+                            }),
+                            completion_tx,
+                        },
+                    )
+                    .map_err(|_| internal_error("thread listener command channel is closed"))?;
+                return Ok(RunningThreadResumeResult::Handled(completion_rx));
+            }
+        }
         let running_thread = if params.history.is_some() {
             if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
                 && self
@@ -5281,6 +5354,9 @@ impl ThreadRequestProcessor {
 
         let instruction_sources = forked_thread.legacy_instruction_sources().await;
 
+        self.outgoing
+            .claim_thread_producer(thread_id, request_id.connection_id)
+            .await?;
         // Auto-attach a conversation listener when forking a thread.
         log_listener_attach_result(
             self.ensure_conversation_listener(

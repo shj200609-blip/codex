@@ -2269,8 +2269,130 @@ impl Session {
             .await;
     }
 
+    pub(crate) async fn list_change_sets(&self) -> Vec<crate::change_set::ChangeSet> {
+        let reviews = {
+            let state = self.state.lock().await;
+            state
+                .change_sets
+                .iter()
+                .filter(|(turn_id, _)| !state.change_set_trackers.contains_key(*turn_id))
+                .map(|(_, review)| Arc::clone(review))
+                .collect::<Vec<_>>()
+        };
+        let mut snapshots = Vec::with_capacity(reviews.len());
+        for review in reviews {
+            snapshots.push(review.lock().await.snapshot.clone());
+        }
+        snapshots.sort_by(|left, right| left.turn_id.cmp(&right.turn_id));
+        snapshots
+    }
+
+    pub(crate) async fn read_change_set(
+        &self,
+        turn_id: &str,
+    ) -> Option<crate::change_set::ChangeSet> {
+        let review = {
+            let state = self.state.lock().await;
+            if state.change_set_trackers.contains_key(turn_id) {
+                return None;
+            }
+            state.change_sets.get(turn_id).cloned()?
+        };
+        let snapshot = review.lock().await.snapshot.clone();
+        Some(snapshot)
+    }
+
+    pub(crate) async fn locate_change_set_hunk(
+        &self,
+        turn_id: &str,
+        change_set_id: &str,
+        file_id: &str,
+        hunk_id: &str,
+    ) -> Result<crate::change_set::ChangeSetHunkLocateResponse, String> {
+        let review = {
+            let state = self.state.lock().await;
+            if state.change_set_trackers.contains_key(turn_id) {
+                return Err("Locate requires a finalized ChangeSet".to_string());
+            }
+            state
+                .change_sets
+                .get(turn_id)
+                .cloned()
+                .ok_or("Finalized ChangeSet not found in this session")?
+        };
+        let review = review.lock().await;
+        if review.snapshot.id != change_set_id {
+            return Err("ChangeSet identity does not match turn".to_string());
+        }
+        review
+            .locate_hunk(file_id, hunk_id, codex_exec_server::LOCAL_FS.as_ref())
+            .await
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "turn admission and review decisions must remain serialized through validation and filesystem mutation"
+    )]
+    pub(crate) async fn review_change_set(
+        &self,
+        turn_id: &str,
+        change_set_id: &str,
+        selection: crate::change_set::ReviewSelection<'_>,
+        action: crate::change_set::ReviewAction,
+    ) -> Result<
+        (
+            crate::change_set::ChangeSet,
+            Vec<crate::change_set::ChangeSetHunkResult>,
+        ),
+        String,
+    > {
+        let active = self.active_turn.lock().await;
+        // Terminal publication precedes clearing ActiveTurn. A task-less
+        // finalizer cannot issue tools, and its ChangeSet is already frozen.
+        if active.as_ref().is_some_and(|turn| turn.task.is_some()) {
+            return Err("Review requires an idle thread".to_string());
+        }
+        let review = self
+            .state
+            .lock()
+            .await
+            .change_sets
+            .get(turn_id)
+            .cloned()
+            .ok_or("Finalized ChangeSet not found in this session")?;
+        let mut review = review.lock().await;
+        if review.snapshot.id != change_set_id {
+            return Err("ChangeSet identity does not match turn".to_string());
+        }
+        let results = review
+            .review(selection, action, codex_exec_server::LOCAL_FS.as_ref())
+            .await?;
+        Ok((review.snapshot.clone(), results))
+    }
+
     /// Persist the event to rollout and send it to clients.
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
+        if matches!(msg, EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_)) {
+            let tracker = self
+                .state
+                .lock()
+                .await
+                .change_set_trackers
+                .remove(&turn_context.sub_id);
+            if let Some(tracker) = tracker {
+                let tracked = tracker.lock().await.review_files();
+                let review = crate::change_set::ChangeSetReview::from_tracked(
+                    &self.thread_id.to_string(),
+                    &turn_context.sub_id,
+                    tracked,
+                );
+                self.state
+                    .lock()
+                    .await
+                    .change_sets
+                    .insert(turn_context.sub_id.clone(), Arc::new(Mutex::new(review)));
+            }
+        }
         let legacy_source = msg.clone();
         if let EventMsg::Error(error) = &legacy_source
             && error

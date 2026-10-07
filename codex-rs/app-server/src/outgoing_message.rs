@@ -31,6 +31,7 @@ use tracing::Span;
 use tracing::warn;
 
 use crate::error_code::internal_error;
+use crate::error_code::invalid_request;
 use crate::server_request_error::TURN_TRANSITION_PENDING_REQUEST_ERROR_REASON;
 pub(crate) use codex_app_server_transport::ConnectionId;
 pub(crate) use codex_app_server_transport::OutgoingError;
@@ -129,6 +130,8 @@ pub(crate) enum OutgoingEnvelope {
 pub(crate) struct OutgoingMessageSender {
     verification_auth: OnceLock<Arc<codex_login::AuthManager>>,
     verification_connections: Mutex<HashSet<ConnectionId>>,
+    // None retains a disconnected producer: observers must never inherit its requests.
+    thread_producers: Mutex<ThreadProducerRegistry>,
     next_server_request_id: AtomicI64,
     sender: mpsc::Sender<OutgoingEnvelope>,
     request_id_to_callback: Mutex<HashMap<RequestId, PendingCallbackEntry>>,
@@ -139,6 +142,12 @@ pub(crate) struct OutgoingMessageSender {
     analytics_events_client: AnalyticsEventsClient,
 }
 
+#[derive(Default)]
+struct ThreadProducerRegistry {
+    owners: HashMap<ThreadId, Option<ConnectionId>>,
+    closed_connections: HashSet<ConnectionId>,
+}
+
 #[derive(Clone)]
 pub(crate) struct ThreadScopedOutgoingMessageSender {
     outgoing: Arc<OutgoingMessageSender>,
@@ -147,6 +156,7 @@ pub(crate) struct ThreadScopedOutgoingMessageSender {
 }
 
 struct PendingCallbackEntry {
+    recipients: Option<Vec<ConnectionId>>,
     verification_owner: Option<ConnectionId>,
     verification_auth_revision: Option<u64>,
     verification_identity: Option<user_verification_auth::Identity>,
@@ -174,10 +184,11 @@ impl ThreadScopedOutgoingMessageSender {
         payload: ServerRequestPayload,
     ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
         self.outgoing
-            .send_request_to_connections(
+            .send_request_inner(
                 Some(self.connection_ids.as_slice()),
                 payload,
                 Some(self.thread_id),
+                true,
             )
             .await
     }
@@ -245,12 +256,56 @@ impl OutgoingMessageSender {
         Self {
             verification_auth: OnceLock::new(),
             verification_connections: Mutex::new(HashSet::new()),
+            thread_producers: Mutex::new(ThreadProducerRegistry::default()),
             next_server_request_id: AtomicI64::new(0),
             sender,
             request_id_to_callback: Mutex::new(HashMap::new()),
             request_contexts: Mutex::new(HashMap::new()),
             analytics_events_client,
         }
+    }
+
+    /// Joining a loaded thread is observation. Only its creator/turn driver claims production.
+    pub(crate) async fn claim_thread_producer(
+        &self,
+        thread_id: ThreadId,
+        connection_id: ConnectionId,
+    ) -> std::result::Result<(), JSONRPCErrorError> {
+        let mut producers = self.thread_producers.lock().await;
+        if producers.closed_connections.contains(&connection_id) {
+            return Err(invalid_request("producer connection is closed"));
+        }
+        if let Some(Some(owner)) = producers.owners.get(&thread_id)
+            && *owner != connection_id
+        {
+            return Err(invalid_request("thread already has a connected producer"));
+        }
+        producers.owners.insert(thread_id, Some(connection_id));
+        Ok(())
+    }
+
+    pub(crate) async fn inherit_thread_producer(&self, thread_id: ThreadId, parent: ThreadId) {
+        let mut producers = self.thread_producers.lock().await;
+        if let Some(owner) = producers.owners.get(&parent).copied() {
+            let current = producers.owners.entry(thread_id).or_insert(owner);
+            if current.is_none() {
+                *current = owner;
+            }
+        }
+    }
+
+    pub(crate) async fn register_thread(&self, thread_id: ThreadId) {
+        // An ownerless live thread is not owned by whichever observer happens to be alone.
+        self.thread_producers
+            .lock()
+            .await
+            .owners
+            .entry(thread_id)
+            .or_insert(None);
+    }
+
+    pub(crate) async fn forget_thread_producer(&self, thread_id: ThreadId) {
+        self.thread_producers.lock().await.owners.remove(&thread_id);
     }
 
     pub(crate) async fn register_request_context(&self, request_context: RequestContext) {
@@ -275,6 +330,21 @@ impl OutgoingMessageSender {
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
         self.disconnect_user_verification_connection(connection_id)
             .await;
+        let mut producers = self.thread_producers.lock().await;
+        producers.closed_connections.insert(connection_id);
+        for owner in producers.owners.values_mut() {
+            if *owner == Some(connection_id) {
+                *owner = None;
+            }
+        }
+        // Hold the routing lock until callbacks are removed so registration cannot race cleanup.
+        self.request_id_to_callback.lock().await.retain(|_, entry| {
+            entry
+                .recipients
+                .as_ref()
+                .is_none_or(|ids| !ids.contains(&connection_id))
+        });
+        drop(producers);
         let mut request_contexts = self.request_contexts.lock().await;
         request_contexts.retain(|request_id, _| request_id.connection_id != connection_id);
     }
@@ -333,6 +403,38 @@ impl OutgoingMessageSender {
         request: ServerRequestPayload,
         thread_id: Option<ThreadId>,
     ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
+        self.send_request_inner(connection_ids, request, thread_id, false)
+            .await
+    }
+
+    async fn send_request_inner(
+        &self,
+        connection_ids: Option<&[ConnectionId]>,
+        request: ServerRequestPayload,
+        thread_id: Option<ThreadId>,
+        route_to_producer: bool,
+    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
+        let producers = self.thread_producers.lock().await;
+        let producer_recipients = thread_id.filter(|_| route_to_producer).map(|thread_id| {
+            match producers.owners.get(&thread_id) {
+                Some(owner) => owner.iter().copied().collect::<Vec<_>>(),
+                // Compatibility for standalone internal/single-client callers.
+                None => connection_ids
+                    .filter(|ids| ids.len() == 1)
+                    .unwrap_or(&[])
+                    .to_vec(),
+            }
+        });
+        let recipients = producer_recipients
+            .as_deref()
+            .or(connection_ids)
+            .map(|ids| {
+                ids.iter()
+                    .copied()
+                    .filter(|id| !producers.closed_connections.contains(id))
+                    .collect::<Vec<_>>()
+            });
+        let connection_ids = recipients.as_deref();
         let id = self.next_request_id();
         let outgoing_message_id = id.clone();
         let request = request.request_with_id(outgoing_message_id.clone());
@@ -364,7 +466,9 @@ impl OutgoingMessageSender {
         } else {
             None
         };
-        if user_verification && (verification_owner.is_none() || auth_changed()) {
+        if connection_ids.is_some_and(|ids| ids.is_empty())
+            || (user_verification && (verification_owner.is_none() || auth_changed()))
+        {
             return (outgoing_message_id, rx_approve);
         }
         let connection_ids = if user_verification {
@@ -377,6 +481,7 @@ impl OutgoingMessageSender {
             request_id_to_callback.insert(
                 id,
                 PendingCallbackEntry {
+                    recipients: connection_ids.map(<[ConnectionId]>::to_vec),
                     verification_owner,
                     verification_auth_revision,
                     verification_identity: verification_identity.clone(),
@@ -387,6 +492,7 @@ impl OutgoingMessageSender {
                 },
             );
         }
+        drop(producers);
         // Disconnect may finish its callback cleanup before registration acquires the lock.
         // Recheck afterward so that ordering cannot leave an orphaned verification callback.
         if let Some(owner) = verification_owner {
@@ -448,7 +554,23 @@ impl OutgoingMessageSender {
         connection_id: ConnectionId,
         thread_id: ThreadId,
     ) {
-        let requests = self.pending_requests_for_thread(thread_id).await;
+        let requests = {
+            let callbacks = self.request_id_to_callback.lock().await;
+            let mut requests = callbacks
+                .values()
+                .filter(|entry| {
+                    entry.thread_id == Some(thread_id)
+                        && entry.verification_owner.is_none()
+                        && entry
+                            .recipients
+                            .as_ref()
+                            .is_some_and(|ids| ids.contains(&connection_id))
+                })
+                .map(|entry| entry.request.clone())
+                .collect::<Vec<_>>();
+            requests.sort_by(|left, right| left.id().cmp(right.id()));
+            requests
+        };
         for request in requests {
             if let Err(err) = self
                 .sender
@@ -565,6 +687,13 @@ impl OutgoingMessageSender {
     ) -> Option<(RequestId, PendingCallbackEntry)> {
         let mut callbacks = self.request_id_to_callback.lock().await;
         let entry = callbacks.get(id)?;
+        if entry
+            .recipients
+            .as_ref()
+            .is_some_and(|ids| !ids.contains(&connection_id))
+        {
+            return None;
+        }
         if let Some(owner) = entry.verification_owner {
             if owner != connection_id {
                 return None;
@@ -579,6 +708,7 @@ impl OutgoingMessageSender {
         callbacks.remove_entry(id)
     }
 
+    #[cfg(test)]
     pub(crate) async fn pending_requests_for_thread(
         &self,
         thread_id: ThreadId,
@@ -1233,6 +1363,195 @@ mod tests {
             CommandExecutionApprovalDecision::AcceptForSession
         );
     }
+    #[tokio::test]
+    async fn thread_interaction_routes_only_to_producer_and_rejects_observer_responses() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let thread_id = ThreadId::new();
+        outgoing
+            .claim_thread_producer(thread_id, ConnectionId(1))
+            .await
+            .unwrap();
+        assert!(
+            outgoing
+                .claim_thread_producer(thread_id, ConnectionId(2))
+                .await
+                .is_err()
+        );
+        let scoped = ThreadScopedOutgoingMessageSender::new(
+            outgoing.clone(),
+            vec![ConnectionId(2), ConnectionId(1)],
+            thread_id,
+        );
+        let (id, mut waiter) = scoped
+            .send_request(ServerRequestPayload::FileChangeRequestApproval(
+                FileChangeRequestApprovalParams {
+                    thread_id: thread_id.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "patch".into(),
+                    started_at_ms: 0,
+                    reason: None,
+                    grant_root: None,
+                },
+            ))
+            .await;
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            OutgoingEnvelope::ToConnection {
+                connection_id: ConnectionId(1),
+                message: OutgoingMessage::Request(_),
+                ..
+            }
+        ));
+        assert!(rx.try_recv().is_err());
+        outgoing
+            .replay_requests_to_connection_for_thread(ConnectionId(2), thread_id)
+            .await;
+        assert!(rx.try_recv().is_err());
+        outgoing
+            .notify_client_response(ConnectionId(2), id.clone(), json!({"decision": "accept"}))
+            .await;
+        outgoing
+            .notify_client_error(
+                ConnectionId(2),
+                id.clone(),
+                internal_error("observer rejects"),
+            )
+            .await;
+        assert!(matches!(
+            waiter.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        outgoing
+            .notify_client_response(ConnectionId(1), id, json!({"decision": "accept"}))
+            .await;
+        assert_eq!(
+            waiter.await.unwrap().unwrap(),
+            json!({"decision": "accept"})
+        );
+    }
+
+    #[tokio::test]
+    async fn producer_disconnect_cancels_interaction_without_observer_handoff() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let thread_id = ThreadId::new();
+        outgoing
+            .claim_thread_producer(thread_id, ConnectionId(1))
+            .await
+            .unwrap();
+        let scoped = ThreadScopedOutgoingMessageSender::new(
+            outgoing.clone(),
+            vec![ConnectionId(2), ConnectionId(1)],
+            thread_id,
+        );
+        let payload = || {
+            ServerRequestPayload::FileChangeRequestApproval(FileChangeRequestApprovalParams {
+                thread_id: thread_id.to_string(),
+                turn_id: "turn".into(),
+                item_id: "patch".into(),
+                started_at_ms: 0,
+                reason: None,
+                grant_root: None,
+            })
+        };
+        let (_, waiter) = scoped.send_request(payload()).await;
+        rx.recv().await.unwrap();
+        outgoing.connection_closed(ConnectionId(1)).await;
+        assert!(waiter.await.is_err());
+        let (_, waiter) = scoped.send_request(payload()).await;
+        assert!(waiter.await.is_err());
+        assert!(rx.try_recv().is_err());
+        outgoing
+            .claim_thread_producer(thread_id, ConnectionId(3))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn ownerless_live_thread_never_delegates_to_a_sole_observer() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let thread_id = ThreadId::new();
+        outgoing.register_thread(thread_id).await;
+        let scoped =
+            ThreadScopedOutgoingMessageSender::new(outgoing, vec![ConnectionId(2)], thread_id);
+        let (_, waiter) = scoped
+            .send_request(ServerRequestPayload::FileChangeRequestApproval(
+                FileChangeRequestApprovalParams {
+                    thread_id: thread_id.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "patch".into(),
+                    started_at_ms: 0,
+                    reason: None,
+                    grant_root: None,
+                },
+            ))
+            .await;
+        assert!(waiter.await.is_err());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn closed_connection_cannot_claim_a_producer_after_cleanup() {
+        let (tx, _rx) = mpsc::channel(4);
+        let outgoing =
+            OutgoingMessageSender::new(tx, codex_analytics::AnalyticsEventsClient::disabled());
+        outgoing.connection_closed(ConnectionId(1)).await;
+        assert!(
+            outgoing
+                .claim_thread_producer(ThreadId::new(), ConnectionId(1))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn registered_child_inherits_its_parent_producer() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let outgoing = Arc::new(OutgoingMessageSender::new(
+            tx,
+            codex_analytics::AnalyticsEventsClient::disabled(),
+        ));
+        let parent = ThreadId::new();
+        let child = ThreadId::new();
+        outgoing
+            .claim_thread_producer(parent, ConnectionId(1))
+            .await
+            .unwrap();
+        outgoing.register_thread(child).await;
+        outgoing.inherit_thread_producer(child, parent).await;
+        let scoped = ThreadScopedOutgoingMessageSender::new(outgoing, vec![ConnectionId(2)], child);
+        let (_, _waiter) = scoped
+            .send_request(ServerRequestPayload::FileChangeRequestApproval(
+                FileChangeRequestApprovalParams {
+                    thread_id: child.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "patch".into(),
+                    started_at_ms: 0,
+                    reason: None,
+                    grant_root: None,
+                },
+            ))
+            .await;
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            OutgoingEnvelope::ToConnection {
+                connection_id: ConnectionId(1),
+                ..
+            }
+        ));
+    }
+
     #[tokio::test]
     async fn send_response_routes_to_target_connection() {
         let (tx, mut rx) = mpsc::channel::<OutgoingEnvelope>(4);

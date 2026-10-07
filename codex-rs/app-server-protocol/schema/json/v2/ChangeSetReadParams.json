@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Read session-local review data after turn completion or interruption.",
+  "properties": {
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "threadId",
+    "turnId"
+  ],
+  "title": "ChangeSetReadParams",
+  "type": "object"
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Accept/revert every Pending hunk; terminal decisions are never reopened.",
+  "properties": {
+    "changeSetId": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "changeSetId",
+    "threadId",
+    "turnId"
+  ],
+  "title": "ChangeSetReviewParams",
+  "type": "object"
+}

@@ -55,6 +55,8 @@ pub struct ApplyPatchRequest {
 #[derive(Default)]
 pub struct ApplyPatchRuntime {
     committed_delta: AppliedPatchDelta,
+    // Acquired after initial approval and retained through delta publication.
+    review_mutation_guard: Option<tokio::sync::RwLockReadGuard<'static, ()>>,
 }
 
 #[derive(Debug)]
@@ -172,6 +174,9 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
         _ctx: &ToolCtx,
     ) -> Result<ApplyPatchRuntimeOutput, ToolError> {
         let started_at = Instant::now();
+        if self.review_mutation_guard.is_none() {
+            self.review_mutation_guard = Some(crate::change_set::REVIEW_MUTATION_GATE.read().await);
+        }
         let fs = req.turn_environment.environment.get_filesystem();
         let sandbox = Self::file_system_sandbox_context_for_attempt(req, attempt);
         let mut stdout = Vec::new();

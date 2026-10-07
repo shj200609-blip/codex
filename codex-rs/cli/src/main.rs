@@ -629,7 +629,7 @@ enum AppServerSubcommand {
     /// Manage the local app-server daemon.
     Daemon(AppServerDaemonCommand),
 
-    /// Proxy stdio bytes to the running app-server control socket.
+    /// Proxy stdio to a --remote shared server or the local app-server control socket.
     Proxy(AppServerProxyCommand),
 
     /// [experimental] Generate TypeScript bindings for the app server protocol.
@@ -696,7 +696,7 @@ enum AppServerDaemonSubcommand {
 
 #[derive(Debug, Args)]
 struct AppServerProxyCommand {
-    /// Path to the app-server Unix domain socket to connect to.
+    /// Path to the app-server Unix domain socket to connect to (without --remote).
     #[arg(long = "sock", value_name = "SOCKET_PATH", value_parser = parse_socket_path)]
     socket_path: Option<AbsolutePathBuf>,
 }
@@ -964,7 +964,7 @@ struct InteractiveRemoteOptions {
     /// Connect the TUI to a remote app server endpoint.
     ///
     /// Accepted forms: `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH`.
-    #[arg(long = "remote", value_name = "ADDR")]
+    #[arg(long = "remote", value_name = "ADDR", env = "CODEX_APP_SERVER_URL")]
     remote: Option<String>,
 
     /// Name of the environment variable containing the bearer token to send to
@@ -1398,6 +1398,12 @@ async fn cli_main(
                     }
                 },
                 Some(AppServerSubcommand::Proxy(proxy_cli)) => {
+                    if let Some(endpoint) =
+                        resolve_remote_endpoint(root_remote, root_remote_auth_token_env)?
+                    {
+                        codex_app_server_client::run_stdio_proxy(endpoint).await?;
+                        return Ok(());
+                    }
                     let socket_path = match proxy_cli.socket_path {
                         Some(socket_path) => socket_path,
                         None => {
@@ -2320,6 +2326,14 @@ fn reject_remote_mode_for_app_server_subcommand(
     remote_auth_token_env: Option<&str>,
     subcommand: Option<&AppServerSubcommand>,
 ) -> anyhow::Result<()> {
+    if let Some(AppServerSubcommand::Proxy(proxy)) = subcommand
+        && remote.is_some()
+    {
+        if proxy.socket_path.is_some() {
+            anyhow::bail!("app-server proxy cannot combine `--remote` with `--sock`");
+        }
+        return Ok(());
+    }
     let subcommand_name = app_server_subcommand_name(subcommand);
     reject_remote_mode_for_subcommand(remote, remote_auth_token_env, subcommand_name)
 }
@@ -4745,6 +4759,37 @@ mod tests {
         )
         .expect_err("app-server proxy should reject --remote-auth-token-env");
         assert!(err.to_string().contains("app-server proxy"));
+    }
+
+    #[test]
+    fn app_server_proxy_accepts_remote_and_rejects_ambiguous_socket() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "--remote",
+            "ws://127.0.0.1:4500",
+            "app-server",
+            "proxy",
+        ])
+        .expect("remote stdio proxy should parse");
+        let Some(Subcommand::AppServer(app_server)) = cli.subcommand else {
+            panic!("expected app-server");
+        };
+        reject_remote_mode_for_app_server_subcommand(
+            cli.remote.remote.as_deref(),
+            None,
+            app_server.subcommand.as_ref(),
+        )
+        .expect("remote proxy should be supported");
+        let proxy = AppServerSubcommand::Proxy(AppServerProxyCommand {
+            socket_path: Some(AbsolutePathBuf::relative_to_current_dir("codex.sock").unwrap()),
+        });
+        let err = reject_remote_mode_for_app_server_subcommand(
+            Some("ws://127.0.0.1:4500"),
+            None,
+            Some(&proxy),
+        )
+        .expect_err("two different proxy destinations must fail");
+        assert!(err.to_string().contains("cannot combine"));
     }
 
     #[test]

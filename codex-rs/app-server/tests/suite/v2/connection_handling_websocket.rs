@@ -487,6 +487,63 @@ async fn websocket_disconnect_keeps_last_subscribed_thread_loaded_until_idle_tim
     Ok(())
 }
 
+#[tokio::test]
+async fn websocket_observer_can_join_fresh_and_ephemeral_threads_without_a_rollout() -> Result<()> {
+    let model = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let home = TempDir::new()?;
+    create_config_toml(home.path(), &model.uri(), "never")?;
+    let (mut process, bind_addr) = spawn_websocket_server(home.path()).await?;
+    let mut producer = connect_websocket(bind_addr).await?;
+    send_initialize_request(&mut producer, 1, "producer").await?;
+    read_response_for_id(&mut producer, 1).await?;
+    let mut observer = connect_websocket(bind_addr).await?;
+    send_initialize_request(&mut observer, 1, "observer").await?;
+    read_response_for_id(&mut observer, 1).await?;
+    let mut ids = Vec::new();
+    for (request_id, ephemeral) in [(2, false), (3, true)] {
+        send_request(
+            &mut producer,
+            "thread/start",
+            request_id,
+            Some(json!({
+                "model": "mock-model", "ephemeral": ephemeral,
+            })),
+        )
+        .await?;
+        let response = read_response_for_id(&mut producer, request_id).await?;
+        let id = response.result["thread"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        send_request(
+            &mut observer,
+            "thread/resume",
+            request_id,
+            Some(json!({
+                "threadId": id, "excludeTurns": true,
+            })),
+        )
+        .await?;
+        let joined = read_response_for_id(&mut observer, request_id).await?;
+        assert_eq!(joined.result["thread"]["id"], id);
+        assert_eq!(joined.result["thread"]["ephemeral"], ephemeral);
+        assert_eq!(joined.result["thread"]["turns"], json!([]));
+        send_request(
+            &mut observer,
+            "changeSet/list",
+            request_id + 10,
+            Some(json!({ "threadId": id })),
+        )
+        .await?;
+        let retained = read_response_for_id(&mut observer, request_id + 10).await?;
+        assert_eq!(retained.result["changeSets"], json!([]));
+        ids.push(id);
+    }
+    assert_loaded_threads(&mut producer, 4, &[ids[0].as_str(), ids[1].as_str()]).await?;
+    process.kill().await?;
+    Ok(())
+}
+
 pub(super) async fn spawn_websocket_server(codex_home: &Path) -> Result<(Child, SocketAddr)> {
     spawn_websocket_server_with_args(codex_home, "ws://127.0.0.1:0", &[]).await
 }

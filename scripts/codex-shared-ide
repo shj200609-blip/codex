@@ -1,0 +1,32 @@
+#!/bin/sh
+# Opt-in executable for the official Codex IDE's chatgpt.cliExecutable setting.
+# Only app-server startup is redirected. Other CLI invocations retain their behavior.
+set -eu
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+codex_binary=${CODEX_SHARED_IDE_BINARY:-"$script_dir/../codex-rs/target/debug/codex"}
+subcommand=
+server_utility=false
+skip_value=false
+for arg in "$@"; do
+  if [ "$subcommand" = app-server ]; then
+    case "$arg" in
+      daemon|proxy|generate-ts|generate-json-schema|generate-internal-json-schema) server_utility=true ;;
+    esac
+    continue
+  fi
+  if [ "$skip_value" = true ]; then skip_value=false; continue; fi
+  case "$arg" in
+    -c|--config|--enable|--disable) skip_value=true ;;
+    -*) ;;
+    *) subcommand=$arg; if [ "$arg" != app-server ]; then break; fi ;;
+  esac
+done
+if [ "$subcommand" = app-server ] && [ "$server_utility" = false ]; then
+  : "${CODEX_APP_SERVER_URL:?CODEX_APP_SERVER_URL is required for shared IDE mode}"
+  # Server startup configuration is owned by the already running shared server.
+  # Preserve the IDE's initialize, all JSON-RPC messages and approval responses.
+  exec "$codex_binary" --remote "$CODEX_APP_SERVER_URL" app-server proxy
+fi
+# Do not let a shared-mode environment change non-app-server utility invocations.
+unset CODEX_APP_SERVER_URL
+exec "$codex_binary" "$@"

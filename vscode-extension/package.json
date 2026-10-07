@@ -1,0 +1,350 @@
+{
+  "name": "codex-changes-review",
+  "displayName": "Codex Changes Review",
+  "description": "Review tracked Codex apply_patch changes with native diffs and safe Core review operations.",
+  "version": "0.5.0",
+  "publisher": "codex-local",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shj200609-blip/codex.git",
+    "directory": "vscode-extension"
+  },
+  "homepage": "https://github.com/shj200609-blip/codex#readme",
+  "bugs": {
+    "url": "https://github.com/shj200609-blip/codex/issues"
+  },
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=20"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "smoke": "node --import tsx scripts/smoke.ts",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "vscode:prepublish": "npm run typecheck && npm run build",
+    "host:acceptance": "node scripts/runHostAcceptance.mjs",
+    "host:lifecycle": "node scripts/runLifecycleAcceptance.mjs",
+    "host:shared-cli": "npm run build && node --import tsx scripts/runSharedAcceptance.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.95.0",
+    "@types/ws": "^8.5.13",
+    "esbuild": "0.28.1",
+    "tsx": "^4.20.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codexChanges",
+          "title": "Codex Changes",
+          "icon": "resources/changes.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexChanges": [
+        {
+          "id": "codexChanges.tree",
+          "name": "CHANGES"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codexChanges.openHunk",
+        "title": "Codex Changes: Open Hunk Diff"
+      },
+      {
+        "command": "codexChanges.acceptHunk",
+        "title": "Codex Changes: Accept Change",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codexChanges.revertHunk",
+        "title": "Codex Changes: Revert Change",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "codexChanges.openFile",
+        "title": "Codex Changes: Open File Diff"
+      },
+      {
+        "command": "codexChanges.acceptFile",
+        "title": "Codex Changes: Accept File",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codexChanges.revertFile",
+        "title": "Codex Changes: Revert File",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "codexChanges.acceptAll",
+        "title": "Codex Changes: Accept All",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codexChanges.revertAll",
+        "title": "Codex Changes: Revert All",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "codexChanges.refresh",
+        "title": "Codex Changes: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexChanges.restart",
+        "title": "Codex Changes: Restart / Reconnect App Server",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "codexChanges.showOutput",
+        "title": "Codex Changes: Show App Server Log"
+      },
+      {
+        "command": "codexChanges.acceptCurrent",
+        "title": "Codex Changes: Accept Hunk at Cursor",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codexChanges.revertCurrent",
+        "title": "Codex Changes: Revert Hunk at Cursor",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "codexChanges.showCoverage",
+        "title": "Changes made through untracked shell, MCP, hook or background writes may not appear here.",
+        "icon": "$(info)"
+      },
+      {
+        "command": "codexChanges.connectIde",
+        "title": "Codex Changes: Connect Codex IDE to Shared Server",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "codexChanges.disconnectIde",
+        "title": "Codex Changes: Restore Original Codex IDE Connection"
+      },
+      {
+        "command": "codexChanges.connectionInfo",
+        "title": "Codex Changes: Show Connection and Workspace"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexChanges.refresh",
+          "when": "view == codexChanges.tree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexChanges.acceptAll",
+          "when": "view == codexChanges.tree && codexChanges.hasPending && codexChanges.ready",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codexChanges.revertAll",
+          "when": "view == codexChanges.tree && codexChanges.hasPending && codexChanges.ready",
+          "group": "navigation@3"
+        },
+        {
+          "command": "codexChanges.restart",
+          "when": "view == codexChanges.tree",
+          "group": "connection"
+        },
+        {
+          "command": "codexChanges.showCoverage",
+          "when": "view == codexChanges.tree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "codexChanges.connectIde",
+          "when": "view == codexChanges.tree",
+          "group": "connection@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codexChanges.openHunk",
+          "when": "view == codexChanges.tree && viewItem =~ /^hunk:/",
+          "group": "review@1"
+        },
+        {
+          "command": "codexChanges.acceptHunk",
+          "when": "view == codexChanges.tree && viewItem == hunk:pending && codexChanges.ready",
+          "group": "review@2"
+        },
+        {
+          "command": "codexChanges.revertHunk",
+          "when": "view == codexChanges.tree && viewItem == hunk:pending && codexChanges.ready",
+          "group": "review@3"
+        },
+        {
+          "command": "codexChanges.openFile",
+          "when": "view == codexChanges.tree && viewItem =~ /^file:/",
+          "group": "review@1"
+        },
+        {
+          "command": "codexChanges.acceptFile",
+          "when": "view == codexChanges.tree && viewItem =~ /^file:.*:pending$/ && codexChanges.ready",
+          "group": "review@2"
+        },
+        {
+          "command": "codexChanges.revertFile",
+          "when": "view == codexChanges.tree && viewItem =~ /^file:.*:pending$/ && codexChanges.ready",
+          "group": "review@3"
+        },
+        {
+          "command": "codexChanges.acceptAll",
+          "when": "view == codexChanges.tree && viewItem =~ /^changeSet:.*:pending$/ && codexChanges.ready",
+          "group": "review@2"
+        },
+        {
+          "command": "codexChanges.revertAll",
+          "when": "view == codexChanges.tree && viewItem =~ /^changeSet:.*:pending$/ && codexChanges.ready",
+          "group": "review@3"
+        },
+        {
+          "command": "codexChanges.acceptHunk",
+          "when": "view == codexChanges.tree && viewItem == hunk:pending && codexChanges.ready",
+          "group": "inline@1"
+        },
+        {
+          "command": "codexChanges.revertHunk",
+          "when": "view == codexChanges.tree && viewItem == hunk:pending && codexChanges.ready",
+          "group": "inline@2"
+        },
+        {
+          "command": "codexChanges.acceptFile",
+          "when": "view == codexChanges.tree && viewItem =~ /^file:.*:pending$/ && codexChanges.ready",
+          "group": "inline@1"
+        },
+        {
+          "command": "codexChanges.revertFile",
+          "when": "view == codexChanges.tree && viewItem =~ /^file:.*:pending$/ && codexChanges.ready",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "codexChanges.openHunk",
+          "when": "false"
+        },
+        {
+          "command": "codexChanges.acceptHunk",
+          "when": "false"
+        },
+        {
+          "command": "codexChanges.revertHunk",
+          "when": "false"
+        },
+        {
+          "command": "codexChanges.openFile",
+          "when": "false"
+        },
+        {
+          "command": "codexChanges.acceptFile",
+          "when": "false"
+        },
+        {
+          "command": "codexChanges.revertFile",
+          "when": "false"
+        },
+        {
+          "command": "codexChanges.showCoverage",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "codexChanges.acceptCurrent",
+          "when": "codexChanges.ready && codexChanges.inlinePending",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexChanges.revertCurrent",
+          "when": "codexChanges.ready && codexChanges.inlinePending",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codex Changes Review",
+      "properties": {
+        "codexChanges.connectionMode": {
+          "type": "string",
+          "enum": [
+            "stdio",
+            "websocket"
+          ],
+          "default": "stdio",
+          "description": "Use a private child process or connect to the same shared server as your Codex producer."
+        },
+        "codexChanges.serverCommand": {
+          "type": "string",
+          "default": "codex",
+          "description": "Forked Codex executable. For the standalone codex-app-server binary, also set serverArgs to [].",
+          "scope": "machine-overridable"
+        },
+        "codexChanges.serverArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "app-server"
+          ],
+          "description": "Executable arguments, passed without a shell.",
+          "scope": "machine-overridable"
+        },
+        "codexChanges.websocketUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:4500",
+          "description": "Shared local App Server URL.",
+          "scope": "machine-overridable"
+        },
+        "codexChanges.requestTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1000,
+          "description": "JSON-RPC request timeout."
+        },
+        "codexChanges.inlineReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Core-located Accept/Revert CodeLens in current files and native diffs. Requires editor.codeLens and diffEditor.codeLens.",
+          "scope": "resource"
+        }
+      }
+    },
+    "configurationDefaults": {
+      "diffEditor.codeLens": true
+    }
+  }
+}

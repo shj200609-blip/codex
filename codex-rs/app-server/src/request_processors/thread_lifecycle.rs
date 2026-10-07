@@ -228,6 +228,10 @@ pub(super) async fn ensure_listener_task_running(
     conversation: Arc<CodexThread>,
     thread_state: Arc<Mutex<ThreadState>>,
 ) -> Result<(), JSONRPCErrorError> {
+    listener_task_context
+        .outgoing
+        .register_thread(conversation_id)
+        .await;
     let (cancel_tx, mut cancel_rx) = oneshot::channel();
     let Some(mut unloading_state) = UnloadingState::new(
         &listener_task_context,
@@ -440,6 +444,7 @@ pub(super) async fn unload_thread_without_subscribers(
     outgoing
         .cancel_requests_for_thread(thread_id, /*error*/ None)
         .await;
+    outgoing.forget_thread_producer(thread_id).await;
     thread_state_manager.remove_thread_state(thread_id).await;
 
     tokio::spawn(async move {

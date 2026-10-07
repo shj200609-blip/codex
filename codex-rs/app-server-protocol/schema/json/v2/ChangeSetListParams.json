@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "List finalized review snapshots retained by this loaded session, independently of conversation history mode. This does not read persisted ChangeSets.",
+  "properties": {
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "threadId"
+  ],
+  "title": "ChangeSetListParams",
+  "type": "object"
+}

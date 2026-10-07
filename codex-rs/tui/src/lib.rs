@@ -508,7 +508,11 @@ async fn connect_remote_app_server(
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     })
     .await
-    .wrap_err("failed to connect to remote app server")?;
+    .map_err(|err| {
+        // Startup downcasts transport I/O errors; keep the shared-mode diagnosis
+        // inside that error so it survives the conversion shown by the CLI.
+        std::io::Error::other(format!("Unable to connect to shared Codex server: {err}"))
+    })?;
     Ok(AppServerClient::Remote(app_server))
 }
 

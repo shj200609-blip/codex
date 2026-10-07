@@ -1635,6 +1635,91 @@ impl MessageProcessor {
                     .mock_experimental_method(params)
                     .await
             }
+            ClientRequest::ChangeSetList { params, .. } => {
+                self.thread_processor.change_set_list(params).await
+            }
+            ClientRequest::ChangeSetRead { params, .. } => {
+                self.thread_processor.change_set_read(params).await
+            }
+            ClientRequest::ChangeSetHunkLocate { params, .. } => {
+                self.thread_processor.change_set_hunk_locate(params).await
+            }
+            ClientRequest::ChangeSetHunkAccept { params, .. } => self
+                .thread_processor
+                .change_set_review(
+                    &params.thread_id,
+                    &params.turn_id,
+                    &params.change_set_id,
+                    codex_core::change_set::ReviewSelection::Hunk {
+                        file_id: &params.file_id,
+                        hunk_id: &params.hunk_id,
+                    },
+                    codex_core::change_set::ReviewAction::Accept,
+                )
+                .await
+                .map(|response| Some(ClientResponsePayload::ChangeSetHunkAccept(response))),
+            ClientRequest::ChangeSetHunkRevert { params, .. } => self
+                .thread_processor
+                .change_set_review(
+                    &params.thread_id,
+                    &params.turn_id,
+                    &params.change_set_id,
+                    codex_core::change_set::ReviewSelection::Hunk {
+                        file_id: &params.file_id,
+                        hunk_id: &params.hunk_id,
+                    },
+                    codex_core::change_set::ReviewAction::Revert,
+                )
+                .await
+                .map(|response| Some(ClientResponsePayload::ChangeSetHunkRevert(response))),
+            ClientRequest::ChangeSetFileAccept { params, .. } => self
+                .thread_processor
+                .change_set_review(
+                    &params.thread_id,
+                    &params.turn_id,
+                    &params.change_set_id,
+                    codex_core::change_set::ReviewSelection::File {
+                        file_id: &params.file_id,
+                    },
+                    codex_core::change_set::ReviewAction::Accept,
+                )
+                .await
+                .map(|response| Some(ClientResponsePayload::ChangeSetFileAccept(response))),
+            ClientRequest::ChangeSetFileRevert { params, .. } => self
+                .thread_processor
+                .change_set_review(
+                    &params.thread_id,
+                    &params.turn_id,
+                    &params.change_set_id,
+                    codex_core::change_set::ReviewSelection::File {
+                        file_id: &params.file_id,
+                    },
+                    codex_core::change_set::ReviewAction::Revert,
+                )
+                .await
+                .map(|response| Some(ClientResponsePayload::ChangeSetFileRevert(response))),
+            ClientRequest::ChangeSetAccept { params, .. } => self
+                .thread_processor
+                .change_set_review(
+                    &params.thread_id,
+                    &params.turn_id,
+                    &params.change_set_id,
+                    codex_core::change_set::ReviewSelection::All,
+                    codex_core::change_set::ReviewAction::Accept,
+                )
+                .await
+                .map(|response| Some(ClientResponsePayload::ChangeSetAccept(response))),
+            ClientRequest::ChangeSetRevert { params, .. } => self
+                .thread_processor
+                .change_set_review(
+                    &params.thread_id,
+                    &params.turn_id,
+                    &params.change_set_id,
+                    codex_core::change_set::ReviewSelection::All,
+                    codex_core::change_set::ReviewAction::Revert,
+                )
+                .await
+                .map(|response| Some(ClientResponsePayload::ChangeSetRevert(response))),
             ClientRequest::TurnStart { params, .. } => {
                 self.turn_processor
                     .turn_start(

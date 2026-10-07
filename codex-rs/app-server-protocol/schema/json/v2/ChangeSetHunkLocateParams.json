@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Query live filesystem coordinates without changing review state or emitting notifications. Historical oldStart/newStart remain unchanged.",
+  "properties": {
+    "changeSetId": {
+      "type": "string"
+    },
+    "fileId": {
+      "type": "string"
+    },
+    "hunkId": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "changeSetId",
+    "fileId",
+    "hunkId",
+    "threadId",
+    "turnId"
+  ],
+  "title": "ChangeSetHunkLocateParams",
+  "type": "object"
+}

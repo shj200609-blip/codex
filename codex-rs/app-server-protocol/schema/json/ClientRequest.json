@@ -274,6 +274,134 @@
         }
       ]
     },
+    "ChangeSetFileReviewParams": {
+      "description": "Accept/revert Pending hunks in one file, preserving Accepted and Conflict.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "fileId",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "ChangeSetHunkLocateParams": {
+      "description": "Query live filesystem coordinates without changing review state or emitting notifications. Historical oldStart/newStart remain unchanged.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "hunkId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "fileId",
+        "hunkId",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "ChangeSetHunkReviewParams": {
+      "description": "Accept/revert one Pending hunk. No client-supplied paths or patches execute.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "fileId": {
+          "type": "string"
+        },
+        "hunkId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "fileId",
+        "hunkId",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "ChangeSetListParams": {
+      "description": "List finalized review snapshots retained by this loaded session, independently of conversation history mode. This does not read persisted ChangeSets.",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ChangeSetReadParams": {
+      "description": "Read session-local review data after turn completion or interruption.",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "ChangeSetReviewParams": {
+      "description": "Accept/revert every Pending hunk; terminal decisions are never reopened.",
+      "properties": {
+        "changeSetId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeSetId",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "ClientInfo": {
       "properties": {
         "name": {
@@ -6099,6 +6227,222 @@
     },
     {
       "description": "NEW APIs",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/list"
+          ],
+          "title": "ChangeSet/listRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetListParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/listRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/read"
+          ],
+          "title": "ChangeSet/readRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetReadParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/readRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/hunk/locate"
+          ],
+          "title": "ChangeSet/hunk/locateRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetHunkLocateParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/hunk/locateRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/hunk/accept"
+          ],
+          "title": "ChangeSet/hunk/acceptRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetHunkReviewParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/hunk/acceptRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/hunk/revert"
+          ],
+          "title": "ChangeSet/hunk/revertRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetHunkReviewParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/hunk/revertRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/file/accept"
+          ],
+          "title": "ChangeSet/file/acceptRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetFileReviewParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/file/acceptRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/file/revert"
+          ],
+          "title": "ChangeSet/file/revertRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetFileReviewParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/file/revertRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/accept"
+          ],
+          "title": "ChangeSet/acceptRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetReviewParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/acceptRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "changeSet/revert"
+          ],
+          "title": "ChangeSet/revertRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ChangeSetReviewParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ChangeSet/revertRequest",
+      "type": "object"
+    },
+    {
       "properties": {
         "id": {
           "$ref": "#/definitions/RequestId"

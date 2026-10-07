@@ -410,9 +410,36 @@ pub(crate) async fn run_turn(
     let mut stop_hook_active = false;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
-    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
-        TurnDiffTracker::with_environment_display_roots(display_roots),
-    ));
+    // RegularTask may invoke run_turn again to drain queued input using the
+    // same turn ID. Reuse the first tracker so its baseline cannot be reset.
+    let (turn_diff_tracker, previously_finalized) = {
+        let mut state = sess.state.lock().await;
+        let previously_finalized = state.change_sets.contains_key(&turn_context.sub_id);
+        let tracker = Arc::clone(
+            state
+                .change_set_trackers
+                .entry(turn_context.sub_id.clone())
+                .or_insert_with(|| {
+                    Arc::new(tokio::sync::Mutex::new(
+                        TurnDiffTracker::with_environment_display_roots(display_roots),
+                    ))
+                }),
+        );
+        (tracker, previously_finalized)
+    };
+    {
+        let mut tracker = turn_diff_tracker.lock().await;
+        if previously_finalized {
+            // Recovery can reuse an interrupted terminal turn ID. Review does
+            // not reopen published decisions or invent a new rollback baseline.
+            tracker.disable_review("Review of a recovered finalized turn is not supported");
+        }
+        for environment in first_step_context.environments.turn_environments() {
+            if environment.environment.is_remote() {
+                tracker.mark_review_environment_unsupported(&environment.selection.environment_id);
+            }
+        }
+    }
 
     // `ModelClientSession` is turn-scoped and caches WebSocket + sticky routing state, so we reuse
     // one instance across retries within this turn.
