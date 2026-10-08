@@ -7,6 +7,7 @@
 
 mod apply_patch;
 mod apps;
+mod change_review_context;
 pub mod change_set;
 mod client;
 mod client_common;

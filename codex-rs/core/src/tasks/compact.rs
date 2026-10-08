@@ -42,6 +42,7 @@ impl SessionTask for CompactTask {
         );
         // Preparation errors must reach the task runner, which reports them to the client.
         session.emit_turn_started(&ctx).await;
+        session.sync_review_context(&ctx).await?;
         let step_context = session
             .capture_step_context(Arc::clone(&ctx), &cancellation_token)
             .await?;

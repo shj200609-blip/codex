@@ -264,6 +264,7 @@ fn rollout_item_type(item: &RolloutItem) -> String {
         RolloutItem::TokenUsageRecord(_) => "token_usage_record".to_string(),
         RolloutItem::WorldState(_) => "world_state".to_string(),
         RolloutItem::RetainedContext(_) => "retained_context".to_string(),
+        RolloutItem::ChangeReview(_) => "change_review".to_string(),
         RolloutItem::SecurityRiskScore(_) => "security_risk_score".to_string(),
         RolloutItem::RealtimeItem(item) => match &item.content {
             codex_protocol::realtime::RealtimeItemContent::RealtimeSessionStarted => {

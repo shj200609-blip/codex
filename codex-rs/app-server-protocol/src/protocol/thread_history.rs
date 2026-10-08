@@ -433,6 +433,7 @@ impl ThreadHistoryBuilder {
             | RolloutItem::WorldState(_)
             | RolloutItem::RealtimeItem(_)
             | RolloutItem::RetainedContext(_)
+            | RolloutItem::ChangeReview(_)
             | RolloutItem::SecurityRiskScore(_)
             | RolloutItem::SessionMeta(_) => {}
         }

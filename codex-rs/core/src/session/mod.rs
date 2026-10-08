@@ -231,6 +231,7 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::exec_output::StreamOutput;
 
+mod change_review;
 mod code_mode_warning;
 mod config_refresh;
 pub(crate) mod context_window;
@@ -1801,6 +1802,8 @@ impl Session {
                 reviewer_compaction_hash.as_deref(),
             );
             state.last_started_turn_id = last_started_turn_id;
+            state.review_context =
+                crate::change_review_context::ReviewContext::restore(rollout_items);
             if let Some(world_state) = world_state_baseline {
                 state.history.set_world_state_baseline(world_state);
             }
@@ -2302,6 +2305,10 @@ impl Session {
         Some(snapshot)
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "the review decision lock keeps the expected image stable throughout filesystem matching"
+    )]
     pub(crate) async fn locate_change_set_hunk(
         &self,
         turn_id: &str,
@@ -2364,9 +2371,35 @@ impl Session {
         if review.snapshot.id != change_set_id {
             return Err("ChangeSet identity does not match turn".to_string());
         }
-        let results = review
+        let scope = match &selection {
+            crate::change_set::ReviewSelection::Hunk { .. } => "hunk",
+            crate::change_set::ReviewSelection::File { .. } => "file",
+            crate::change_set::ReviewSelection::All => "all",
+        };
+        let mut results = review
             .review(selection, action, codex_exec_server::LOCAL_FS.as_ref())
             .await?;
+        if let Some(event) = review.review_event(scope, action, &results) {
+            let mut state = self.state.lock().await;
+            state.review_context.observe(event.clone());
+            // Keep turn admission excluded until the journal append is acknowledged.
+            // Reconnecting clients cannot lose facts behind a successful response.
+            if !self
+                .persist_rollout_items(&[RolloutItem::ChangeReview(event.clone())])
+                .await
+                || self.flush_rollout().await.is_err()
+            {
+                state
+                    .review_context
+                    .undurable
+                    .insert(event.id.clone(), event);
+                for result in results.iter_mut().filter(|result| {
+                    result.changed && result.state == crate::change_set::ChangeReviewState::Reverted
+                }) {
+                    result.message = Some("Rollback succeeded, but review-context persistence failed; pending facts will be retried before sampling. Recovery is not yet durable.".to_owned());
+                }
+            }
+        }
         Ok((review.snapshot.clone(), results))
     }
 

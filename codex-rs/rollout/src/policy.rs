@@ -44,6 +44,7 @@ pub fn persisted_rollout_item(
         | RolloutItem::TokenUsageRecord(_)
         | RolloutItem::WorldState(_)
         | RolloutItem::RetainedContext(_)
+        | RolloutItem::ChangeReview(_)
         | RolloutItem::SecurityRiskScore(_)
         | RolloutItem::SessionMeta(_) => Some(Cow::Borrowed(item)),
     }

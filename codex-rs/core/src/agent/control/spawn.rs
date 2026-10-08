@@ -117,6 +117,7 @@ fn keep_forked_rollout_item(item: &RolloutItem, preserve_context_baselines: bool
         | RolloutItem::InterAgentCommunication(_)
         | RolloutItem::InterAgentCommunicationMetadata { .. }
         | RolloutItem::RetainedContext(_)
+        | RolloutItem::ChangeReview(_)
         | RolloutItem::SecurityRiskScore(_) => false,
         // Full-history forks preserve the cached prompt prefix and can keep diffing
         // from the parent's durable baseline. Truncated forks drop part of that prompt,
@@ -1202,6 +1203,7 @@ impl LocalAgentControl {
                 | RolloutItem::InterAgentCommunication(_)
                 | RolloutItem::InterAgentCommunicationMetadata { .. } => true,
                 RolloutItem::RetainedContext(_)
+                | RolloutItem::ChangeReview(_)
                 | RolloutItem::TokenUsageRecord(_)
                 | RolloutItem::SecurityRiskScore(_) => false,
             }

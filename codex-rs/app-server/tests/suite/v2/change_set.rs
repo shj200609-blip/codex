@@ -22,6 +22,10 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::CurrentHunkRangeKind;
 use codex_app_server_protocol::HunkLocationResult;
 use codex_app_server_protocol::HunkNotPresentReason;
+use codex_app_server_protocol::ThreadCompactStartParams;
+use codex_app_server_protocol::ThreadCompactStartResponse;
+use codex_app_server_protocol::ThreadResumeParams;
+use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnCompletedNotification;
@@ -42,9 +46,18 @@ struct Fixture {
     path: PathBuf,
     _dir: TempDir,
     _server: MockServer,
+    home: PathBuf,
 }
 
 async fn setup(before: Option<&str>, after: Option<&str>) -> Result<Fixture> {
+    setup_with_followups(before, after, 0).await
+}
+
+async fn setup_with_followups(
+    before: Option<&str>,
+    after: Option<&str>,
+    followups: usize,
+) -> Result<Fixture> {
     let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
     let home = dir.path().join("home");
     let workspace = dir.path().join("workspace");
@@ -65,11 +78,14 @@ async fn setup(before: Option<&str>, after: Option<&str>) -> Result<Fixture> {
         None => "*** Delete File: a.txt\n".to_string(),
     };
     let patch = format!("*** Begin Patch\n{body}*** End Patch\n");
-    let server = create_mock_responses_server_sequence_unchecked(vec![
+    let mut responses = vec![
         create_apply_patch_sse_response(&patch, "patch-call")?,
         create_final_assistant_message_sse_response("done")?,
-    ])
-    .await;
+    ];
+    for _ in 0..followups {
+        responses.push(create_final_assistant_message_sse_response("followup")?);
+    }
+    let server = create_mock_responses_server_sequence_unchecked(responses).await;
     MockResponsesConfig::new(&server.uri())
         .with_approval_policy("never")
         .with_sandbox_mode("danger-full-access")
@@ -136,10 +152,67 @@ async fn setup(before: Option<&str>, after: Option<&str>) -> Result<Fixture> {
         path,
         _dir: dir,
         _server: server,
+        home,
     })
 }
 
 impl Fixture {
+    async fn followup(&mut self) -> Result<serde_json::Value> {
+        let _: TurnStartResponse = self
+            .mcp
+            .request(|request_id| ClientRequest::TurnStart {
+                request_id,
+                params: TurnStartParams {
+                    thread_id: self.set.thread_id.clone(),
+                    input: vec![UserInput::Text {
+                        text: "What edits did I undo through review?".to_owned(),
+                        text_elements: vec![],
+                    }],
+                    ..Default::default()
+                },
+            })
+            .await?;
+        let _: TurnCompletedNotification = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.mcp.read_notification("turn/completed"),
+        )
+        .await??;
+        let requests = self._server.received_requests().await.unwrap();
+        Ok(serde_json::from_slice(&requests.last().unwrap().body)?)
+    }
+
+    async fn cold_resume(&mut self) -> Result<()> {
+        self.mcp.shutdown_gracefully().await?;
+        self.mcp = TestAppServer::builder()
+            .with_codex_home(&self.home)
+            .build_initialized()
+            .await?;
+        let _: ThreadResumeResponse = self
+            .mcp
+            .request(|request_id| ClientRequest::ThreadResume {
+                request_id,
+                params: ThreadResumeParams {
+                    thread_id: self.set.thread_id.clone(),
+                    ..Default::default()
+                },
+            })
+            .await?;
+        let listed: ChangeSetListResponse = self
+            .mcp
+            .request(|request_id| ClientRequest::ChangeSetList {
+                request_id,
+                params: ChangeSetListParams {
+                    thread_id: self.set.thread_id.clone(),
+                },
+            })
+            .await?;
+        assert!(
+            listed.change_sets.is_empty(),
+            "review facts persist without restoring ChangeSet/baselines"
+        );
+        Ok(())
+    }
+
     async fn locate(&mut self, index: usize) -> Result<HunkLocationResult> {
         let file = &self.set.files[0];
         let params = ChangeSetHunkLocateParams {
@@ -247,6 +320,155 @@ impl Fixture {
         self.set = response.change_set.clone();
         Ok(())
     }
+}
+
+fn review_facts(body: &serde_json::Value) -> Vec<String> {
+    body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["role"] == "developer")
+        .flat_map(|item| item["content"].as_array().unwrap())
+        .filter_map(|part| part["text"].as_str())
+        .filter(|text| text.contains("<change_review_facts>"))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[tokio::test]
+async fn review_context_next_model_input_has_one_merged_fact_and_unchanged_prefix() -> Result<()> {
+    skip_if_remote!(Ok(()), "local review");
+    skip_if_no_network!(Ok(()));
+    let mut f = setup_with_followups(Some("A\nB\nC\nD\n"), Some("A\nB2\nC\nD\nE\n"), 2).await?;
+    let before_requests = f._server.received_requests().await.unwrap();
+    let before: serde_json::Value = serde_json::from_slice(&before_requests.last().unwrap().body)?;
+    f.hunk(0, false).await?;
+    f.hunk(1, false).await?;
+    let repeated = f.all(false, false).await?;
+    assert!(repeated.results.iter().all(|result| !result.changed));
+    assert_eq!(
+        f._server.received_requests().await.unwrap().len(),
+        before_requests.len(),
+        "review does not invoke inference"
+    );
+    fs::write(&f.path, "MANUAL AFTER REVIEW\n")?;
+    let next = f.followup().await?;
+    let facts = review_facts(&next);
+    assert_eq!(facts.len(), 1);
+    assert!(facts[0].contains("2 rollback operations confirmed 2 successful hunk reversions"));
+    assert!(facts[0].contains("B2\\n"));
+    assert!(facts[0].contains("E\\n"));
+    let prefix = before["input"].as_array().unwrap();
+    assert_eq!(
+        &next["input"].as_array().unwrap()[..prefix.len()],
+        prefix.as_slice(),
+        "prior model input is not rewritten"
+    );
+    assert!(
+        !serde_json::to_string(&next)?.contains("change_review_event_ids"),
+        "host cursor is not model input"
+    );
+    assert_eq!(fs::read_to_string(&f.path)?, "MANUAL AFTER REVIEW\n");
+    let repeated_input = f.followup().await?;
+    assert_eq!(
+        review_facts(&repeated_input),
+        facts,
+        "the next turn retains the original summary, without another append"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_context_accept_and_conflict_do_not_inject_success() -> Result<()> {
+    skip_if_remote!(Ok(()), "local review");
+    skip_if_no_network!(Ok(()));
+    for accept in [true, false] {
+        let mut f = setup_with_followups(Some("old\n"), Some("abc\n"), 1).await?;
+        if !accept {
+            fs::write(&f.path, "USER\n")?;
+        }
+        let result = f.all(accept, true).await?;
+        assert_eq!(
+            result.results[0].state,
+            if accept {
+                ChangeReviewState::Accepted
+            } else {
+                ChangeReviewState::Conflict
+            }
+        );
+        assert!(review_facts(&f.followup().await?).is_empty());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_context_file_partial_success_is_truthful_in_model_input() -> Result<()> {
+    skip_if_remote!(Ok(()), "local review");
+    skip_if_no_network!(Ok(()));
+    let mut f = setup_with_followups(
+        Some("A\nB\nC\nD\nE\nF\nG\nH\nI\nJ\n"),
+        Some("A\nB2\nC\nD\nE\nF\nG\nH\nI\nJ2\n"),
+        1,
+    )
+    .await?;
+    fs::write(&f.path, "A\nB2\nC\nD\nE\nF\nG\nH\nI\nUSER\n")?;
+    f.all(false, true).await?;
+    let facts = review_facts(&f.followup().await?);
+    assert_eq!(facts.len(), 1);
+    assert!(facts[0].contains("1 successful hunk reversions"));
+    assert!(facts[0].contains("1 outcomes were not confirmed"));
+    assert!(!facts[0].contains("J2\\n"));
+    assert_eq!(
+        fs::read_to_string(&f.path)?,
+        "A\nB\nC\nD\nE\nF\nG\nH\nI\nUSER\n"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_context_cold_resume_pending_then_delivered_no_duplicate() -> Result<()> {
+    skip_if_remote!(Ok(()), "local review");
+    skip_if_no_network!(Ok(()));
+    let mut f = setup_with_followups(Some("old\n"), Some("abc\n"), 2).await?;
+    f.all(false, true).await?;
+    f.cold_resume().await?;
+    let first = review_facts(&f.followup().await?);
+    assert_eq!(first.len(), 1);
+    assert!(first[0].contains("abc\\n"));
+    f.cold_resume().await?;
+    assert_eq!(review_facts(&f.followup().await?), first);
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_context_manual_compaction_receives_pending_facts_without_replay() -> Result<()> {
+    skip_if_remote!(Ok(()), "local review");
+    skip_if_no_network!(Ok(()));
+    let mut f = setup_with_followups(Some("old\n"), Some("abc\n"), 2).await?;
+    f.all(false, true).await?;
+    let _: ThreadCompactStartResponse = f
+        .mcp
+        .request(|request_id| ClientRequest::ThreadCompactStart {
+            request_id,
+            params: ThreadCompactStartParams {
+                thread_id: f.set.thread_id.clone(),
+            },
+        })
+        .await?;
+    let _: TurnCompletedNotification = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        f.mcp.read_notification("turn/completed"),
+    )
+    .await??;
+    let requests = f._server.received_requests().await.unwrap();
+    let compact_input: serde_json::Value = serde_json::from_slice(&requests.last().unwrap().body)?;
+    assert_eq!(review_facts(&compact_input).len(), 1);
+    f.cold_resume().await?;
+    assert!(
+        review_facts(&f.followup().await?).is_empty(),
+        "compacted review log must not be replayed"
+    );
+    Ok(())
 }
 
 #[tokio::test]

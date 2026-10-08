@@ -347,6 +347,7 @@ impl RollbackPlanner {
                 });
             }
             RolloutItem::SecurityRiskScore(_) => self.record_boundaries[index] = None,
+            RolloutItem::ChangeReview(_) => self.record_boundaries[index] = None,
         }
 
         Ok(())

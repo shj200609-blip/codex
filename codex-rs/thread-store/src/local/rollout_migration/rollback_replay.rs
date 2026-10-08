@@ -78,6 +78,7 @@ impl ModelReplayPlanner {
             | RolloutItem::RealtimeItem(_)
             | RolloutItem::TokenUsageRecord(_)
             | RolloutItem::RetainedContext(_)
+            | RolloutItem::ChangeReview(_)
             | RolloutItem::SecurityRiskScore(_)
             | RolloutItem::WorldState(_) => return,
         };

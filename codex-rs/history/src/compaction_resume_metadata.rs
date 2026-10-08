@@ -46,6 +46,7 @@ pub fn resume_multi_agent_version(item: &RolloutItem) -> Option<MultiAgentVersio
         | RolloutItem::TokenUsageRecord(_)
         | RolloutItem::WorldState(_)
         | RolloutItem::RetainedContext(_)
+        | RolloutItem::ChangeReview(_)
         | RolloutItem::SecurityRiskScore(_)
         | RolloutItem::RealtimeItem(_)
         | RolloutItem::EventMsg(_) => None,

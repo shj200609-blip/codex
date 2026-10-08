@@ -108,6 +108,81 @@ fn aggregate(states: impl IntoIterator<Item = ChangeReviewState>) -> ChangeRevie
 }
 
 impl ChangeSetReview {
+    /// Capture only newly decided rollback outcomes after the safety checks and
+    /// post-write verification. `changed` alone also includes conflicts/Accept.
+    #[expect(
+        clippy::expect_used,
+        reason = "review outcomes contain only strings, integers and derived enums; serialization to memory is infallible"
+    )]
+    pub(crate) fn review_event(
+        &self,
+        scope: &str,
+        action: ReviewAction,
+        results: &[ChangeSetHunkResult],
+    ) -> Option<codex_history::ChangeReviewEvent> {
+        if !matches!(action, ReviewAction::Revert) {
+            return None;
+        }
+        let mut outcomes = Vec::new();
+        for result in results.iter().filter(|result| result.changed) {
+            let fi = self
+                .snapshot
+                .files
+                .iter()
+                .position(|f| f.id == result.file_id)?;
+            let file = &self.snapshot.files[fi];
+            let hi = file.hunks.iter().position(|h| h.id == result.hunk_id)?;
+            let edit = &self.files[fi].edits[hi];
+            let after = self.files[fi].after.as_deref().unwrap_or("");
+            let after_lines = lines(after);
+            let removed_lines = &after_lines[edit.new.clone()];
+            let removed_text = if result.state == ChangeReviewState::Reverted
+                && !removed_lines.is_empty()
+                && removed_lines.iter().map(|line| line.len()).sum::<usize>() <= 96
+            {
+                Some(removed_lines.concat())
+            } else {
+                None
+            };
+            outcomes.push(codex_history::ChangeReviewOutcome {
+                file_id: file.id.clone(),
+                hunk_id: result.hunk_id.clone(),
+                path: file.path.clone(),
+                kind: file.change_type,
+                state: result.state,
+                old_start: start(&edit.old),
+                old_lines: edit.old.len() as u32,
+                new_start: start(&edit.new),
+                new_lines: edit.new.len() as u32,
+                removed_text,
+                reason: result
+                    .message
+                    .as_ref()
+                    .map(|reason| reason.chars().take(256).collect()),
+            });
+        }
+        if outcomes.is_empty() {
+            return None;
+        }
+        let revision = self.snapshot.revision.to_string();
+        let encoded = serde_json::to_string(&outcomes).expect("review outcomes are serializable");
+        Some(codex_history::ChangeReviewEvent {
+            id: identity(&[
+                &self.snapshot.thread_id,
+                &self.snapshot.id,
+                &revision,
+                "revert",
+                &encoded,
+            ]),
+            thread_id: self.snapshot.thread_id.clone(),
+            turn_id: self.snapshot.turn_id.clone(),
+            change_set_id: self.snapshot.id.clone(),
+            revision: self.snapshot.revision,
+            scope: scope.to_owned(),
+            outcomes,
+        })
+    }
+
     pub(crate) fn from_tracked(thread_id: &str, turn_id: &str, tracked: Vec<TrackedFile>) -> Self {
         let id = identity(&["changeSet", thread_id, turn_id]);
         let mut snapshot = ChangeSet {
@@ -372,6 +447,10 @@ impl ChangeSetReview {
         }
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "the review mutation gate must exclude tracked writes throughout the read and exact match"
+    )]
     pub(crate) async fn locate_hunk(
         &self,
         file_id: &str,

@@ -61,6 +61,9 @@ pub struct ResponseItemEnvelope {
 ///
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 pub struct CodexHarnessMetadata {
+    /// Review operations represented by this summary. Host-only delivery cursor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub change_review_event_ids: Vec<String>,
     /// Complete retained records actually delivered by this Guardian message. Host-only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guardian_sources: Vec<RetainedSource>,
@@ -209,6 +212,8 @@ impl Borrow<ResponseItem> for ResponseItemEnvelope {
 /// Persisted rollout item used by core history and rollout storage.
 #[derive(Debug, Clone)]
 pub enum RolloutItem {
+    /// Authoritative review outcomes, awaiting a bounded model-visible summary.
+    ChangeReview(ChangeReviewEvent),
     SessionMeta(SessionMetaLine),
     ResponseItem(ResponseItemEnvelope),
     InterAgentCommunication(InterAgentCommunication),
@@ -258,7 +263,10 @@ impl JsonSchema for RolloutItem {
     }
 }
 
+mod change_review;
 mod guardian_history;
+pub use change_review::ChangeReviewEvent;
+pub use change_review::ChangeReviewOutcome;
 mod reconciled_retained_context;
 mod retained_context;
 mod sender_user_messages;

@@ -4058,6 +4058,7 @@ async fn start_new_context_window_persists_checkpoint_state() {
         | RolloutItem::TurnContext(_)
         | RolloutItem::WorldState(_)
         | RolloutItem::RetainedContext(_)
+        | RolloutItem::ChangeReview(_)
         | RolloutItem::SecurityRiskScore(_)
         | RolloutItem::TokenUsageRecord(_)
         | RolloutItem::RealtimeItem(_)
@@ -4153,6 +4154,7 @@ async fn record_initial_history_assigns_and_persists_id_for_forked_response_item
         | RolloutItem::TurnContext(_)
         | RolloutItem::WorldState(_)
         | RolloutItem::RetainedContext(_)
+        | RolloutItem::ChangeReview(_)
         | RolloutItem::SecurityRiskScore(_)
         | RolloutItem::TokenUsageRecord(_)
         | RolloutItem::RealtimeItem(_)
@@ -11566,7 +11568,7 @@ enum TerminalEventKind {
     TurnAborted,
 }
 
-async fn attach_in_memory_thread_store(
+pub(super) async fn attach_in_memory_thread_store(
     session: &mut Session,
 ) -> Arc<codex_thread_store::InMemoryThreadStore> {
     let store = Arc::new(codex_thread_store::InMemoryThreadStore::default());

@@ -242,12 +242,18 @@ Atomic conditional filesystem mutation is required to close this gap.
 
 ## Storage, unsupported inputs and follow-ups
 
+Successful rollbacks now produce a small durable fact journal and a bounded
+model-visible summary at the next request. See
+[review context synchronization](change-review-context.md) for identity, budget,
+recovery, cache accounting and acceptance steps. This recovers operation facts
+and delivery cursors only; it does not recover ChangeSets or baselines.
+
 Storage is explicitly `sessionMemory`. VS Code reconnect/reload can read the
 same loaded thread; process restart, thread unload or thread-history replacement
 loses data. There are no workspace-local `.codex/changesets` files. Baselines are
 kept until session disposal, even after terminal decisions. Long sessions can
 retain substantial memory. The existing thread store persists canonical
-history; a follow-up should add versioned baseline blobs and review records
+history; a follow-up should add versioned baseline blobs and complete review records
 under Codex-owned state storage, with retention, recovery and thread deletion
 semantics, rather than adding large contents to ordinary history events.
 

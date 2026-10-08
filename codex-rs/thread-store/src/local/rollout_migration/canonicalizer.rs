@@ -293,6 +293,7 @@ impl LegacyRolloutCanonicalizer {
             | RolloutItem::TokenUsageRecord(_)
             | RolloutItem::RealtimeItem(_)
             | RolloutItem::RetainedContext(_)
+            | RolloutItem::ChangeReview(_)
             | RolloutItem::SecurityRiskScore(_)
             | RolloutItem::WorldState(_)) => {
                 self.write_item(writer, &timestamp, item).await?;

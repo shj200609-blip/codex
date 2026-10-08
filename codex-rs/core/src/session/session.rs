@@ -1673,6 +1673,7 @@ impl Session {
                     | RolloutItem::RealtimeItem(_)
                     | RolloutItem::TokenUsageRecord(_)
                     | RolloutItem::RetainedContext(_)
+                    | RolloutItem::ChangeReview(_)
                     | RolloutItem::SecurityRiskScore(_) => {}
                 }
             }

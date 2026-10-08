@@ -64,6 +64,7 @@ impl ReasoningEffortPin {
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
 pub(crate) struct SessionState {
+    pub(crate) review_context: crate::change_review_context::ReviewContext,
     pub(crate) change_set_trackers:
         std::collections::HashMap<String, crate::tools::context::SharedTurnDiffTracker>,
     pub(crate) change_sets: std::collections::HashMap<
@@ -123,6 +124,7 @@ impl SessionState {
         history: ContextManager,
     ) -> Self {
         Self {
+            review_context: Default::default(),
             change_set_trackers: Default::default(),
             change_sets: Default::default(),
             active_disabled_plugin_ids: Vec::new(),

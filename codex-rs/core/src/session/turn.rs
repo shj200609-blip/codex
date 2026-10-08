@@ -172,6 +172,19 @@ pub(crate) async fn run_turn(
         crate::guardian::check_pending_guardian_input(&sess, &turn_context).await?;
     }
     // Record results from hooks that finished after the previous turn before this turn's user prompt.
+    // Append review facts before pre-turn compaction: its model request must see
+    // them too. No replay after compaction; the cursor is independent of history.
+    if let Err(error) = sess.sync_review_context(&turn_context).await {
+        run_hooks_and_record_inputs(
+            &sess,
+            &turn_context,
+            &turn_context.capture_current_model_info(),
+            &input,
+            PersistContext::Standard,
+        )
+        .await;
+        return Err(error);
+    }
     drain_async_hook_results(&sess, &turn_context, /*before_user_prompt*/ true).await;
 
     let mut client_session =

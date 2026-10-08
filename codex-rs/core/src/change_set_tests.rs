@@ -94,6 +94,133 @@ async fn two_hunks_revert_only_selected() {
 }
 
 #[tokio::test]
+async fn review_context_records_actual_success_and_partial_file_failure() {
+    let (dir, mut review) = modified(
+        "A\nB\nC\nD\nE\nF\nG\nH\nI\nJ\n",
+        "A\nB2\nC\nD\nE\nF\nG\nH\nI\nJ2\n",
+    )
+    .await;
+    let path = dir.path().join("a.txt");
+    // User changes the second target while the first remains safely matchable.
+    fs::write(&path, "A\nB2\nC\nD\nE\nF\nG\nH\nI\nUSER\n").unwrap();
+    let file_id = review.snapshot.files[0].id.clone();
+    let results = review
+        .review(
+            ReviewSelection::File { file_id: &file_id },
+            ReviewAction::Revert,
+            LOCAL_FS.as_ref(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        results.iter().map(|r| r.state).collect::<Vec<_>>(),
+        vec![ChangeReviewState::Reverted, ChangeReviewState::Conflict]
+    );
+    let event = review
+        .review_event("file", ReviewAction::Revert, &results)
+        .unwrap();
+    assert_eq!(event.revision, 1);
+    assert_eq!(event.scope, "file");
+    assert_eq!(event.outcomes[0].removed_text.as_deref(), Some("B2\n"));
+    assert!(event.outcomes[1].removed_text.is_none());
+    assert!(event.outcomes[1].reason.is_some());
+    let repeated = review
+        .review(
+            ReviewSelection::All,
+            ReviewAction::Revert,
+            LOCAL_FS.as_ref(),
+        )
+        .await
+        .unwrap();
+    assert!(repeated.iter().all(|result| !result.changed));
+    assert!(
+        review
+            .review_event("all", ReviewAction::Revert, &repeated)
+            .is_none()
+    );
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        "A\nB\nC\nD\nE\nF\nG\nH\nI\nUSER\n"
+    );
+}
+
+#[tokio::test]
+async fn review_context_accept_and_io_conflict_are_not_success() {
+    let (_dir, mut review) = modified("old\n", "abc\n").await;
+    let accepted = decide(&mut review, 0, ReviewAction::Accept).await;
+    assert!(
+        review
+            .review_event("hunk", ReviewAction::Accept, &[accepted])
+            .is_none()
+    );
+    let (dir, mut review) = modified("old\n", "abc\n").await;
+    fs::remove_file(dir.path().join("a.txt")).unwrap();
+    fs::create_dir(dir.path().join("a.txt")).unwrap();
+    let failed = decide(&mut review, 0, ReviewAction::Revert).await;
+    assert_eq!(failed.state, ChangeReviewState::Conflict);
+    let event = review
+        .review_event("hunk", ReviewAction::Revert, &[failed])
+        .unwrap();
+    assert!(
+        event
+            .outcomes
+            .iter()
+            .all(|outcome| outcome.state != ChangeReviewState::Reverted)
+    );
+    let mut context = crate::change_review_context::ReviewContext::default();
+    context.observe(event);
+    assert!(context.prepare().is_none());
+}
+
+#[tokio::test]
+async fn review_context_file_revert_records_precise_ranges_without_large_contents() {
+    let (dir, mut review) = modified("A\nB\nC\nD\n", "A\nB2\nC\nD\nE\n").await;
+    let results = review
+        .review(
+            ReviewSelection::All,
+            ReviewAction::Revert,
+            LOCAL_FS.as_ref(),
+        )
+        .await
+        .unwrap();
+    let event = review
+        .review_event("all", ReviewAction::Revert, &results)
+        .unwrap();
+    assert_eq!(event.outcomes.len(), 2);
+    assert!(
+        event
+            .outcomes
+            .iter()
+            .all(|outcome| outcome.state == ChangeReviewState::Reverted)
+    );
+    assert_eq!(event.outcomes[1].new_start, 5);
+    assert_eq!(event.outcomes[1].new_lines, 1);
+    assert_eq!(event.outcomes[1].old_lines, 0);
+    fs::write(dir.path().join("a.txt"), "MANUAL AFTER REVIEW\n").unwrap();
+    // Facts never read or overwrite the subsequent user edit.
+    assert_eq!(
+        review
+            .review_event("all", ReviewAction::Revert, &results)
+            .unwrap(),
+        event
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "MANUAL AFTER REVIEW\n"
+    );
+    let (_dir, mut review) = modified("before\n", &format!("{}\n", "x".repeat(1024))).await;
+    let result = decide(&mut review, 0, ReviewAction::Revert).await;
+    assert!(
+        review
+            .review_event("hunk", ReviewAction::Revert, &[result])
+            .unwrap()
+            .outcomes[0]
+            .removed_text
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn dirty_baseline_is_preserved() {
     let (dir, mut review) = modified("USER CHANGE\nA\nB\n", "USER CHANGE\nA2\nB\n").await;
     decide(&mut review, 0, ReviewAction::Revert).await;
